@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CM CRED — Soluções Financeiras | Empréstimos Rápidos e Seguros</title>
+    <meta name="description" content="CM CRED Soluções Financeiras. Dinheiro na hora via Cartão de Crédito, FGTS e Consignado com as menores taxas do mercado. WhatsApp: (79) 99862-7907" />
+    <link rel="icon" type="image/png" href="/cmcred-logo.png" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;500;700;900&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              orbitron: ['Orbitron', 'sans-serif'],
+              roboto: ['Roboto', 'sans-serif'],
+            },
+            colors: {
+              gold: {
+                300: '#FDE047',
+                400: '#FACC15',
+                500: '#EAB308',
+                600: '#D97706',
+                700: '#B45309',
+                800: '#92400E',
+                900: '#78350F',
+                metallic: '#D4AF37',
+                glow: '#FFD700',
+              },
+              emerald: {
+                400: '#34d399',
+                500: '#10b981',
+                600: '#059669',
+              },
+              black: {
+                950: '#050608',
+                900: '#0a0b0e',
+                850: '#10131a',
+                800: '#161922',
+                750: '#1c212c',
+                700: '#242a38',
+              }
+            },
+            animation: {
+              'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'float': 'float 3s ease-in-out infinite',
+              'bounce-slow': 'bounce 3s infinite',
+              'gold-shimmer': 'shimmer 2.5s infinite linear',
+            },
+            keyframes: {
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-10px)' },
+              },
+              shimmer: {
+                '0%': { backgroundPosition: '-200% 0' },
+                '100%': { backgroundPosition: '200% 0' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      /* Custom Gold Scrollbar */
+      ::-webkit-scrollbar {
+        width: 10px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #0a0b0e;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #242a38;
+        border-radius: 5px;
+        border: 2px solid #0a0b0e;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #D4AF37;
+      }
+      
+      html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 100px;
+      }
+      
+      /* Visibility & Interaction Fixes */
+      input, select, textarea {
+        font-family: inherit;
+        font-size: 16px;
+        pointer-events: auto;
+      }
+
+      /* Fix for autofill background */
+      input:-webkit-autofill,
+      input:-webkit-autofill:hover, 
+      input:-webkit-autofill:focus {
+        -webkit-text-fill-color: #ffffff !important;
+        -webkit-box-shadow: 0 0 0px 1000px #0a0b0e inset !important;
+        transition: background-color 5000s ease-in-out 0s;
+      }
+
+      #root, main {
+        position: relative;
+        z-index: 1;
+      }
+
+      .text-gradient-gold {
+        background: linear-gradient(135deg, #FFF6D1 0%, #F59E0B 40%, #D4AF37 70%, #996515 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .bg-gradient-gold {
+        background: linear-gradient(135deg, #F59E0B 0%, #D4AF37 50%, #B45309 100%);
+      }
+
+      .border-gold-glow {
+        box-shadow: 0 0 25px rgba(212, 175, 55, 0.25);
+      }
+    </style>
+  </head>
+  <body class="bg-black-900 text-gray-100 antialiased selection:bg-amber-500 selection:text-black">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
