@@ -15,6 +15,7 @@ import MachinesManager from './MachinesManager';
 import CardFlagsManager from './CardFlagsManager';
 import RatesSettingsManager from './RatesSettingsManager';
 import ReportsManager from './ReportsManager';
+import Tutorials from './Tutorials';
 import { useDevToolsProtection } from '../lib/security';
 
 // Simple Error Boundary to prevent black screens
@@ -51,6 +52,7 @@ const SECTION_CONFIG: Record<string, { title: string; subtitle: string }> = {
   relatorios: { title: 'Central de Relatórios', subtitle: 'Auditoria financeira consolidada e exportação de dados' },
   usuarios: { title: 'Gestão de Acessos', subtitle: 'Controle de privilégios e operadores de sistema' },
   logs: { title: 'Auditoria de Sistema', subtitle: 'Rastreamento forense de atividades administrativas' },
+  tutoriais: { title: 'Central de Ajuda & Tutoriais', subtitle: 'Manuais operacionais, passo a passo e base de conhecimento' },
 };
 
 const AdminApp: React.FC = () => {
@@ -130,6 +132,7 @@ const AdminApp: React.FC = () => {
         case 'relatorios': return Boolean(perms.reports || perms.relatorios);
         case 'usuarios': return Boolean(perms.users || perms.usuarios);
         case 'logs': return Boolean(perms.audit || perms.logs);
+        case 'tutoriais': return true;
         default: return false;
       }
     };
@@ -165,6 +168,7 @@ const AdminApp: React.FC = () => {
       case 'relatorios': return <ReportsManager />;
       case 'usuarios': return <UsersManager />;
       case 'logs': return <AuditLogs />;
+      case 'tutoriais': return <Tutorials onNavigate={setActiveSection} />;
       default: return <Dashboard />;
     }
   };

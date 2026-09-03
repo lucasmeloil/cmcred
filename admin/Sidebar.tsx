@@ -17,7 +17,8 @@ import {
   CreditCard,
   FileDown,
   Sliders,
-  Cpu
+  Cpu,
+  BookOpen
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -38,6 +39,7 @@ const NAV_ITEMS: SidebarItem[] = [
   { id: 'relatorios', icon: <FileDown size={20} />, label: 'Relatórios Gerais' },
   { id: 'usuarios', icon: <ShieldCheck size={20} />, label: 'Acessos' },
   { id: 'logs', icon: <History size={20} />, label: 'Auditoria' },
+  { id: 'tutoriais', icon: <BookOpen size={20} />, label: 'Central de Ajuda' },
 ];
 
 interface SidebarProps {
@@ -97,6 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, onNavigate }) => {
       case 'relatorios': return Boolean(perms.reports || perms.relatorios);
       case 'usuarios': return Boolean(perms.users || perms.usuarios);
       case 'logs': return Boolean(perms.audit || perms.logs);
+      case 'tutoriais': return true;
       default: return false;
     }
   };
