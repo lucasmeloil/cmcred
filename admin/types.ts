@@ -153,12 +153,17 @@ export interface LoanRequest {
 
 export interface FinanceEntry {
   id: string;
+  loan_id?: string;
   description: string;
   amount: number;
+  gross_amount?: number;
   due_date: string;
   type: 'payable' | 'receivable';
   status: 'pending' | 'paid' | 'overdue';
   category: string;
+  bank_id?: number;
+  machine_id?: number;
+  created_at?: string;
 }
 
 export interface Bank {

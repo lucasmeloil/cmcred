@@ -1,22 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Send, Calculator, TrendingUp, Wallet, AlertCircle, Edit3, CheckCircle2, Sliders } from 'lucide-react';
+import { Send, Calculator, TrendingUp, Wallet, AlertCircle, Edit3, CheckCircle2 } from 'lucide-react';
 import { 
   getCustomCardFlags, 
   calculateLoanSimulation,
   fetchRatesFromDatabase,
   buildWhatsAppSimulationMessage,
   type CardFlagOption,
-  type RateTableType,
-  TABLE_OPTIONS
+  type RateTableType
 } from '../lib/rates';
 
 const Simulator: React.FC = () => {
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
-  const [tabelaTaxa, setTabelaTaxa] = useState<RateTableType>('tabela_1');
+  const tabelaTaxa: RateTableType = 'tabela_2';
   const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>('Valor Líquido');
   const [service, setService] = useState<string>('troca-limite');
-  const [amount, setAmount] = useState<number>(1800);
-  const [installments, setInstallments] = useState<number>(8);
+  const [amount, setAmount] = useState<number>(1000);
+  const [installments, setInstallments] = useState<number>(10);
   const [name, setName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [selectedFlagKey, setSelectedFlagKey] = useState<string>('VISA_MASTER');
@@ -122,7 +121,7 @@ const Simulator: React.FC = () => {
                     
                     {/* Badge */}
                     <div className="absolute -top-3 right-4 bg-gradient-to-r from-amber-500 to-yellow-500 text-black-950 text-[10px] md:text-xs font-black px-3.5 py-1 rounded-full uppercase tracking-wider shadow-lg ring-2 ring-black flex items-center gap-1.5">
-                        <CheckCircle2 size={12} /> {tipoCalculo} ({tabelaTaxa === 'tabela_1' ? 'Tabela 1' : 'Tabela 2'})
+                        <CheckCircle2 size={12} /> {tipoCalculo} (Tabela Flex)
                     </div>
 
                     <div className="space-y-6">
@@ -168,28 +167,6 @@ const Simulator: React.FC = () => {
             <div className="p-6 md:p-10 bg-black-900/70 backdrop-blur-sm flex flex-col justify-center order-2">
               <form onSubmit={handleSimulate} className="space-y-5 md:space-y-6">
                 
-                {/* Seleção de Tabela de Taxas */}
-                <div>
-                  <label className="block text-xs font-black text-amber-400 mb-2 uppercase tracking-widest flex items-center gap-1.5">
-                    <Sliders size={14} /> Matriz de Taxas
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 bg-black-950 p-1.5 rounded-xl border border-amber-500/30">
-                    {TABLE_OPTIONS.map(opt => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setTabelaTaxa(opt.id)}
-                        className={`py-2.5 px-3 rounded-lg font-bold text-xs tracking-wide transition-all ${
-                          tabelaTaxa === opt.id
-                            ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-black-950 shadow-md font-black'
-                            : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        {opt.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
 
                 {/* Tipo de Cálculo: Líquido ou Bruto */}
                 <div>

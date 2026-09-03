@@ -27,51 +27,51 @@ const Hero: React.FC = () => {
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(245,158,11,0.15),rgba(255,255,255,0))]"></div>
 
       <div className="container mx-auto px-4 md:px-8 relative z-10 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-12 items-center">
-        
+
         {/* Visual Content: 3D Official CM CRED Mascot Character with Golden Glow */}
         <div className="relative flex justify-center items-center order-1 md:order-2 pt-1 md:pt-0">
-            <div className="relative w-full max-w-[190px] sm:max-w-[250px] md:max-w-[460px] flex justify-center items-center">
-                {/* Intense Gold Glowing Halo behind mascot */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/30 via-yellow-400/20 to-amber-600/30 rounded-full blur-[40px] md:blur-[100px] animate-pulse"></div>
-                
-                {/* Golden rotating ring in background */}
-                <div className="absolute w-[95%] aspect-square rounded-full border border-amber-500/25 animate-spin" style={{ animationDuration: '35s' }}></div>
-                
-                {/* 3D Mascot Character */}
-                <div className="relative z-10 w-full flex justify-center items-end animate-float">
-                  <img 
-                      src="/cmcred-mascote.png" 
-                      alt="Mascote Oficial CM CRED" 
-                      className="object-contain w-full max-h-[190px] sm:max-h-[250px] md:max-h-[500px] drop-shadow-[0_10px_25px_rgba(245,158,11,0.35)] transition-transform duration-500 hover:scale-105"
-                  />
-                </div>
-                
-                {/* Floating Card 1: Dinheiro na Hora PIX */}
-                <div className="absolute bottom-1 -left-4 sm:bottom-4 sm:-left-6 md:bottom-10 md:-left-8 bg-black-900/95 backdrop-blur-md border border-amber-500/50 p-1.5 sm:p-2 md:p-3.5 rounded-xl md:rounded-2xl shadow-[0_0_20px_rgba(212,175,55,0.3)] animate-bounce z-20" style={{ animationDuration: '3.5s' }}>
-                    <div className="flex items-center gap-1.5 md:gap-3">
-                        <div className="bg-amber-500/20 p-1 md:p-2 rounded-lg md:rounded-xl text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
-                            <Zap size={14} className="md:w-5 md:h-5 text-yellow-400" />
-                        </div>
-                        <div>
-                            <p className="text-[8px] md:text-xs text-gray-400 uppercase tracking-wider font-semibold">Dinheiro</p>
-                            <p className="text-white text-[10px] md:text-sm font-black font-orbitron text-gradient-gold">Na Hora PIX</p>
-                        </div>
-                    </div>
-                </div>
+          <div className="relative w-full max-w-[190px] sm:max-w-[250px] md:max-w-[460px] flex justify-center items-center">
+            {/* Intense Gold Glowing Halo behind mascot */}
+            <div className="absolute inset-0 bg-gradient-to-tr from-amber-500/30 via-yellow-400/20 to-amber-600/30 rounded-full blur-[40px] md:blur-[100px] animate-pulse"></div>
 
-                {/* Floating Card 2: Em até 21x */}
-                <div className="absolute top-1 -right-4 sm:top-4 sm:-right-6 md:top-12 md:-right-8 bg-black-900/95 backdrop-blur-md border border-amber-500/50 p-1.5 sm:p-2 md:p-3.5 rounded-xl md:rounded-2xl shadow-[0_0_20px_rgba(212,175,55,0.3)] animate-bounce z-20" style={{ animationDuration: '4.5s' }}>
-                    <div className="flex items-center gap-1.5 md:gap-3">
-                         <div className="bg-gradient-to-r from-amber-500 to-yellow-500 p-1 md:p-2 rounded-lg md:rounded-xl text-black-950 font-black shadow-[0_0_12px_rgba(245,158,11,0.4)]">
-                            <span className="text-[9px] md:text-sm font-orbitron">21x</span>
-                        </div>
-                        <div>
-                            <p className="text-[8px] md:text-xs text-gray-400 uppercase tracking-wider font-semibold">Em até</p>
-                            <p className="text-white text-[10px] md:text-sm font-black font-orbitron">21x Cartão</p>
-                        </div>
-                    </div>
-                </div>
+            {/* Golden rotating ring in background */}
+            <div className="absolute w-[95%] aspect-square rounded-full border border-amber-500/25 animate-spin" style={{ animationDuration: '35s' }}></div>
+
+            {/* 3D Mascot Character */}
+            <div className="relative z-10 w-full flex justify-center items-end animate-float">
+              <img
+                src="/cmcred-mascote.png"
+                alt="Mascote Oficial CM CRED"
+                className="object-contain w-full max-h-[190px] sm:max-h-[250px] md:max-h-[500px] drop-shadow-[0_10px_25px_rgba(245,158,11,0.35)] transition-transform duration-500 hover:scale-105"
+              />
             </div>
+
+            {/* Floating Card 1: Dinheiro na Hora PIX */}
+            <div className="absolute bottom-1 -left-4 sm:bottom-4 sm:-left-6 md:bottom-10 md:-left-8 bg-black-900/95 backdrop-blur-md border border-amber-500/50 p-1.5 sm:p-2 md:p-3.5 rounded-xl md:rounded-2xl shadow-[0_0_20px_rgba(212,175,55,0.3)] animate-bounce z-20" style={{ animationDuration: '3.5s' }}>
+              <div className="flex items-center gap-1.5 md:gap-3">
+                <div className="bg-amber-500/20 p-1 md:p-2 rounded-lg md:rounded-xl text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
+                  <Zap size={14} className="md:w-5 md:h-5 text-yellow-400" />
+                </div>
+                <div>
+                  <p className="text-[8px] md:text-xs text-gray-400 uppercase tracking-wider font-semibold">Dinheiro</p>
+                  <p className="text-white text-[10px] md:text-sm font-black font-orbitron text-gradient-gold">Na Hora PIX</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Floating Card 2: Em até 21x */}
+            <div className="absolute top-1 -right-4 sm:top-4 sm:-right-6 md:top-12 md:-right-8 bg-black-900/95 backdrop-blur-md border border-amber-500/50 p-1.5 sm:p-2 md:p-3.5 rounded-xl md:rounded-2xl shadow-[0_0_20px_rgba(212,175,55,0.3)] animate-bounce z-20" style={{ animationDuration: '4.5s' }}>
+              <div className="flex items-center gap-1.5 md:gap-3">
+                <div className="bg-gradient-to-r from-amber-500 to-yellow-500 p-1 md:p-2 rounded-lg md:rounded-xl text-black-950 font-black shadow-[0_0_12px_rgba(245,158,11,0.4)]">
+                  <span className="text-[9px] md:text-sm font-orbitron">18x</span>
+                </div>
+                <div>
+                  <p className="text-[8px] md:text-xs text-gray-400 uppercase tracking-wider font-semibold">Em até</p>
+                  <p className="text-white text-[10px] md:text-sm font-black font-orbitron">18x no Cartão</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Text Content */}
@@ -80,16 +80,16 @@ const Hero: React.FC = () => {
             <ShieldCheck size={12} className="md:w-3.5 md:h-3.5 text-yellow-400" />
             <span>Cobrimos Qualquer Oferta • Loja em Lagarto/SE</span>
           </div>
-          
+
           <h1 className="text-xl sm:text-3xl md:text-5xl lg:text-6xl font-orbitron font-black text-white leading-tight drop-shadow-lg">
-            DINHEIRO COM O <br/>
+            DINHEIRO COM O <br />
             <span className="text-gradient-gold">
               LIMITE DO SEU CARTÃO
             </span>
           </h1>
-          
+
           <p className="text-xs sm:text-sm md:text-lg text-gray-300 max-w-lg mx-auto md:mx-0 font-normal leading-relaxed px-1 md:px-0">
-            Troque seu limite do cartão por <strong className="text-amber-400 font-bold">dinheiro na hora</strong> com as menores taxas. 
+            Troque seu limite do cartão por <strong className="text-amber-400 font-bold">dinheiro na hora</strong> com as menores taxas.
             Dividimos em <span className="text-yellow-300 font-black">até 21x</span> e cobrimos qualquer oferta!
           </p>
 
