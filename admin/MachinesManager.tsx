@@ -25,6 +25,8 @@ import {
 import { useAuth } from './AuthContext';
 import { getCustomCardFlags, type CardFlagOption } from '../lib/rates';
 import type { Bank } from './types';
+import { RateInput } from './RateInput';
+
 
 // Baseline de custo MDR padrão de mercado para adquirentes (Stone, PagBank, Cielo, etc.)
 // 100% ajustável pelo administrador
@@ -195,9 +197,9 @@ const MachinesManager: React.FC = () => {
   };
 
   // Alterar taxa individual na modal
-  const handleRateChange = (flagKey: string, installment: number, valueStr: string) => {
-    const val = parseFloat(valueStr.replace(',', '.'));
-    const cleanVal = isNaN(val) ? 0 : Math.max(0, val);
+  const handleRateChange = (flagKey: string, installment: number, value: number | string) => {
+    const num = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
+    const cleanVal = isNaN(num) ? 0 : Math.max(0, num);
 
     setFormData(prev => ({
       ...prev,
@@ -210,6 +212,7 @@ const MachinesManager: React.FC = () => {
       }
     }));
   };
+
 
   // Salvar no Banco de Dados Supabase
   const handleSave = async (e: React.FormEvent) => {
@@ -790,10 +793,10 @@ const MachinesManager: React.FC = () => {
                       >
                         <span style={{ color: '#0f172a', fontWeight: 900, fontSize: '0.95rem' }}>{n}x</span>
                         <div style={{ position: 'relative', width: '100%' }}>
-                          <input 
-                            type="text"
-                            value={currentRate.toString().replace('.', ',')}
-                            onChange={e => handleRateChange(activeFlagTab, n, e.target.value)}
+                          <RateInput
+                            key={`${activeFlagTab}-${n}`}
+                            value={currentRate}
+                            onChange={newVal => handleRateChange(activeFlagTab, n, newVal)}
                             style={{
                               width: '100%',
                               padding: '0.5rem 0.3rem',
@@ -807,6 +810,7 @@ const MachinesManager: React.FC = () => {
                               outline: 'none',
                               boxSizing: 'border-box'
                             }}
+                            placeholder="0,00"
                           />
                           <span style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: '0.75rem', fontWeight: 800, pointerEvents: 'none' }}>
                             %

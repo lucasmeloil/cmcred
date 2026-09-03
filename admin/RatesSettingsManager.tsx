@@ -38,6 +38,8 @@ import {
   type RateTableType,
   TABLE_OPTIONS
 } from '../lib/rates';
+import { RateInput } from './RateInput';
+
 
 interface MachineItem {
   id: number;
@@ -135,9 +137,9 @@ const RatesSettingsManager: React.FC = () => {
   }, []);
 
   // Alterar taxa individual
-  const handleRateChange = (flagKey: string, installment: number, valueStr: string) => {
-    const val = parseFloat(valueStr.replace(',', '.'));
-    const cleanVal = isNaN(val) ? 0 : Math.max(0, val);
+  const handleRateChange = (flagKey: string, installment: number, value: number | string) => {
+    const num = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
+    const cleanVal = isNaN(num) ? 0 : Math.max(0, num);
     
     if (activeTable === 'tabela_1') {
       setRatesT1(prev => ({
@@ -158,6 +160,7 @@ const RatesSettingsManager: React.FC = () => {
     }
     setHasChanges(true);
   };
+
 
   // Salvar alterações no Banco de Dados Supabase (POST / UPSERT)
   const handleSave = async () => {
@@ -740,13 +743,13 @@ const RatesSettingsManager: React.FC = () => {
                         {n}x
                       </span>
                       <div style={{ position: 'relative', width: '100%' }}>
-                        <input
-                          type="text"
+                        <RateInput
+                          key={`${activeTable}-${selectedFlagKey}-${n}`}
+                          value={currentVal}
                           readOnly={!isAdmin}
-                          value={currentVal.toString().replace('.', ',')}
-                          onChange={e => {
+                          onChange={newVal => {
                             if (!isAdmin) return;
-                            handleRateChange(selectedFlagKey, n, e.target.value);
+                            handleRateChange(selectedFlagKey, n, newVal);
                           }}
                           style={{
                             ...inputRateStyle,
