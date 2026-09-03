@@ -90,6 +90,7 @@ export const ADMIN_PERMISSIONS: UserPermissions = {
 export interface AdminUser {
   id: string;
   nome: string;
+  full_name?: string;
   email: string;
   perfil: UserRole;
   status: UserStatus;

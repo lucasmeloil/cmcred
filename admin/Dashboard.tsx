@@ -141,7 +141,8 @@ const Dashboard: React.FC = () => {
     return recentLoans.filter(l => {
       if (!currentUser) return false;
       if (currentUser.id && l.consultant_id === currentUser.id) return true;
-      if (currentUser.full_name && l.consultant_name && l.consultant_name.trim().toLowerCase() === currentUser.full_name.trim().toLowerCase()) return true;
+      const currentUserName = (currentUser.nome || currentUser.full_name || '').trim().toLowerCase();
+      if (currentUserName && l.consultant_name && l.consultant_name.trim().toLowerCase() === currentUserName) return true;
       return false;
     });
   }, [recentLoans, currentUser]);
@@ -318,9 +319,12 @@ const Dashboard: React.FC = () => {
       let myCommission = 0;
       let myOperationsCount = 0;
 
+      const currentUserName = (currentUser?.nome || currentUser?.full_name || '').trim().toLowerCase();
+
       loans.forEach(l => {
         const isMine = (currentUser?.id && l.consultant_id === currentUser.id) ||
-                       (currentUser?.full_name && l.profiles?.full_name && l.profiles.full_name.trim().toLowerCase() === currentUser.full_name.trim().toLowerCase());
+                       (currentUserName && l.profiles?.full_name && l.profiles.full_name.trim().toLowerCase() === currentUserName) ||
+                       (currentUserName && l.consultant_name && l.consultant_name.trim().toLowerCase() === currentUserName);
         if (isMine) {
           const fin = calculateLoanFinancials(l);
           myPIX += fin.netAmount;
