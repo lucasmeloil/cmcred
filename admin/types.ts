@@ -147,6 +147,9 @@ export interface LoanRequest {
   profit: number;
   consultant_commission_amount?: number;
   company_net_profit?: number;
+  machine_fee_percentage?: number;
+  machine_fee_amount?: number;
+  net_bank_amount?: number;
   created_at: string;
   observations?: string;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { calculateLoanFinancials } from '../lib/rates';
 import { useAuth } from './AuthContext';
+import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const StatCard: React.FC<{
   icon: React.ReactNode; label: string; value: string | number;
@@ -107,11 +108,9 @@ const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
   const email = (currentUser?.email || '').toLowerCase();
   const isAdmin = email === 'caique@cmcred.com.br' || 
-                  email.includes('caique') || 
-                  currentUser?.perfil === 'admin' ||
-                  email.includes('admin') || 
-                  email.includes('cmcred');
-  const isConsultant = !isAdmin && currentUser?.perfil === 'consultant';
+                  email.startsWith('admin@') || 
+                  currentUser?.perfil === 'admin';
+  const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
 
   const [stats, setStats] = useState({
     totalPIX: 0,
@@ -136,16 +135,22 @@ const Dashboard: React.FC = () => {
   });
   const [recentLoans, setRecentLoans] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'vendas' | 'operacoes'>('vendas');
+
+  const myOperations = useMemo(() => {
+    return recentLoans.filter(l => {
+      if (!currentUser) return false;
+      if (currentUser.id && l.consultant_id === currentUser.id) return true;
+      if (currentUser.full_name && l.consultant_name && l.consultant_name.trim().toLowerCase() === currentUser.full_name.trim().toLowerCase()) return true;
+      return false;
+    });
+  }, [recentLoans, currentUser]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
+      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
-      
-      // Se for consultor, busca as operações dele e operações gerais abertas
-      if (isConsultant && currentUser?.id) {
-        loansQuery = loansQuery.or(`consultant_id.eq.${currentUser.id},consultant_id.is.null`);
-      }
 
       const [loansRes, leadsRes, customersRes, financeRes] = await Promise.all([
         loansQuery,
@@ -160,21 +165,18 @@ const Dashboard: React.FC = () => {
       // Fallback resiliente caso a consulta padrão sofra atraso de sincronização de token
       if (loans.length === 0 && (isAdmin || !currentUser?.id)) {
         try {
-          const adminLoansRes = await supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
-          if (adminLoansRes.data && adminLoansRes.data.length > 0) {
-            loans = adminLoansRes.data;
+          const fallbackRes = await supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+          if (fallbackRes.data && fallbackRes.data.length > 0) {
+            loans = fallbackRes.data;
           }
         } catch {}
       }
 
-      if (finance.length === 0 && (isAdmin || !currentUser?.id)) {
-        try {
-          const adminFinanceRes = await supabaseAdmin.from('finance').select('*');
-          if (adminFinanceRes.data && adminFinanceRes.data.length > 0) {
-            finance = adminFinanceRes.data;
-          }
-        } catch {}
-      }
+      setRecentLoans(loans.map((l: any) => ({
+        ...l,
+        clienteNome: l.leads?.name || l.customers?.name || 'Cliente Portador',
+        consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
+      })));
 
       let totalPIX = 0;
       let totalApproved = 0;
@@ -188,7 +190,9 @@ const Dashboard: React.FC = () => {
         totalPIX += fin.netAmount;
         totalApproved += fin.grossAmount;
         totalGrossProfit += fin.operationProfit;
-        totalCommission += fin.commissionAmount;
+        if (isAdmin || l.consultant_id === currentUser?.id) {
+          totalCommission += fin.commissionAmount;
+        }
         totalMachineFees += fin.machineFeeAmount;
         totalProfit += fin.companyNetProfit;
       });
@@ -308,12 +312,31 @@ const Dashboard: React.FC = () => {
         }
       });
 
+      // Métricas pessoais do consultor logado
+      let myPIX = 0;
+      let myApproved = 0;
+      let myCommission = 0;
+      let myOperationsCount = 0;
+
+      loans.forEach(l => {
+        const isMine = (currentUser?.id && l.consultant_id === currentUser.id) ||
+                       (currentUser?.full_name && l.profiles?.full_name && l.profiles.full_name.trim().toLowerCase() === currentUser.full_name.trim().toLowerCase());
+        if (isMine) {
+          const fin = calculateLoanFinancials(l);
+          myPIX += fin.netAmount;
+          myApproved += fin.grossAmount;
+          myCommission += fin.commissionAmount;
+          myOperationsCount++;
+        }
+      });
+      const myAverageTicket = myOperationsCount > 0 ? (myPIX / myOperationsCount) : 0;
+
       setStats({
         totalPIX,
         totalProfit,
         totalGrossProfit,
         totalApproved,
-        totalCommission,
+        totalCommission: isConsultant ? myCommission : totalCommission,
         totalMachineFees,
         averageTicket,
         activeOperations: loans.length,
@@ -329,11 +352,6 @@ const Dashboard: React.FC = () => {
         evolutionStats,
         monthlyStats: last12Months
       });
-
-      setRecentLoans(loans.slice(0, 8).map(l => ({
-        ...l,
-        clienteNome: l.leads?.name || l.customers?.name || 'Cliente Identificado'
-      })));
     } catch (error) {
       console.error('Erro ao processar dados estratégicos:', error);
     } finally {
@@ -367,6 +385,9 @@ const Dashboard: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [isAdmin, isConsultant, currentUser?.id, currentUser?.email]);
+
+  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
+  useAutoRefresh(fetchData, 30000);
 
   const COLORS = ['#d97706', '#2563eb', '#f59e0b', '#7c3aed', '#ec4899', '#06b6d4'];
   const GRADIENT_COLORS = ['#d97706', '#f59e0b', '#b45309', '#8b5cf6'];
@@ -421,95 +442,159 @@ const Dashboard: React.FC = () => {
         </div>
       </header>
 
-      {/* Primary Financial KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
-        <StatCard 
-          icon={<CreditCard size={20} />} 
-          label={isConsultant ? "Meu Volume Bruto (Cartão)" : "Passagem Bruta (Cartão)"} 
-          value={`R$ ${stats.totalApproved.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-          sub={isConsultant ? "Total passado em suas vendas" : "Volume bruto passado na rede"} 
-          color="#3b82f6" 
-          trendType="up"
-          trendText="Vendas" 
-        />
-        <StatCard 
-          icon={<TrendingDown size={20} />} 
-          label={isConsultant ? "Meus Repasses PIX" : "Repasses Realizados (PIX)"} 
-          value={`R$ ${stats.totalPIX.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-          sub={isConsultant ? "Líquido liberado a seus clientes" : "Líquido transferido aos clientes"} 
-          color="#ef4444" 
-          trendType="down"
-          trendText="Saída Caixa" 
-        />
+      {/* Abas Personalizadas para Perfil Consultor */}
+      {isConsultant && (
+        <div style={{ display: 'flex', gap: '0.75rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.75rem' }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('vendas')}
+            style={{
+              background: activeTab === 'vendas' ? '#d97706' : '#f8fafc',
+              color: activeTab === 'vendas' ? '#ffffff' : '#64748b',
+              border: '1px solid',
+              borderColor: activeTab === 'vendas' ? '#d97706' : '#cbd5e1',
+              padding: '0.75rem 1.4rem',
+              borderRadius: '12px',
+              fontWeight: 800,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              boxShadow: activeTab === 'vendas' ? '0 4px 12px rgba(217,119,6,0.25)' : 'none'
+            }}
+          >
+            <CreditCard size={18} /> Aba Vendas & Produção
+          </button>
 
-        {/* Visão Exclusiva para Administradores / Gestão da Empresa */}
-        {isAdmin && (
-          <>
-            <StatCard 
-              icon={<TrendingUp size={20} />} 
-              label="Ganhos Brutos (Juros)" 
-              value={`+ R$ ${stats.totalGrossProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-              sub="Margem bruta antes de taxas" 
-              color="#059669" 
-              trendType="up"
-              trendText="Spread Bruto" 
-            />
-            <StatCard 
-              icon={<Landmark size={20} />} 
-              label="Custo de Taxas MDR" 
-              value={`- R$ ${stats.totalMachineFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-              sub="Taxas retidas pelas adquirentes" 
-              color="#dc2626" 
-              trendType="neutral"
-              trendText="Intercâmbio" 
-            />
-            <StatCard 
-              icon={<DollarSign size={20} />} 
-              label="Lucro Real CM CRED" 
-              value={`R$ ${stats.totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-              sub="Lucro líquido retido na empresa" 
-              color="#d97706" 
-              trendType="up"
-              trendText="Lucro Líquido" 
-            />
-          </>
-        )}
+          <button
+            type="button"
+            onClick={() => setActiveTab('operacoes')}
+            style={{
+              background: activeTab === 'operacoes' ? '#0f172a' : '#f8fafc',
+              color: activeTab === 'operacoes' ? '#ffffff' : '#64748b',
+              border: '1px solid',
+              borderColor: activeTab === 'operacoes' ? '#0f172a' : '#cbd5e1',
+              padding: '0.75rem 1.4rem',
+              borderRadius: '12px',
+              fontWeight: 800,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              boxShadow: activeTab === 'operacoes' ? '0 4px 12px rgba(15,23,42,0.25)' : 'none'
+            }}
+          >
+            <Layers size={18} /> Minhas Operações Realizadas ({myOperations.length})
+          </button>
+        </div>
+      )}
 
-        {/* Visão de Performance para Consultor */}
-        {isConsultant && (
-          <>
-            <StatCard 
-              icon={<Layers size={20} />} 
-              label="Minhas Operações" 
-              value={`${recentLoans.length} ops`} 
-              sub="Contratos concluídos" 
-              color="#059669" 
-              trendType="up"
-              trendText="Produção" 
-            />
-            <StatCard 
-              icon={<Activity size={20} />} 
-              label="Ticket Médio" 
-              value={`R$ ${stats.averageTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-              sub="Média por operação" 
-              color="#0ea5e9" 
-              trendType="neutral"
-              trendText="Média" 
-            />
-            {Number(currentUser?.commission_percentage || 0) > 0 && (
+      {/* Primary Financial KPIs (Aba Vendas para Consultor ou Visão Completa para Admin) */}
+      {(isAdmin || activeTab === 'vendas') && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
+          {isAdmin ? (
+            <>
               <StatCard 
-                icon={<Award size={20} />} 
-                label="Minha Comissão Gerada" 
-                value={`R$ ${stats.totalCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
-                sub={`Taxa de ${currentUser?.commission_percentage}% sobre juros`} 
-                color="#f59e0b" 
+                icon={<CreditCard size={20} />} 
+                label="Passagem Bruta (Cartão)" 
+                value={`R$ ${stats.totalApproved.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Volume bruto passado na rede" 
+                color="#3b82f6" 
                 trendType="up"
-                trendText="Comissão" 
+                trendText="Vendas" 
               />
-            )}
-          </>
-        )}
-      </div>
+              <StatCard 
+                icon={<TrendingDown size={20} />} 
+                label="Repasses Realizados (PIX)" 
+                value={`R$ ${stats.totalPIX.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Líquido transferido aos clientes" 
+                color="#ef4444" 
+                trendType="down"
+                trendText="Saída Caixa" 
+              />
+              <StatCard 
+                icon={<TrendingUp size={20} />} 
+                label="Ganhos Brutos (Juros)" 
+                value={`R$ ${stats.totalGrossProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Diferença Bruta (Cartão - PIX)" 
+                color="#10b981" 
+                trendType="up"
+                trendText="Spread Bruto" 
+              />
+              <StatCard 
+                icon={<Landmark size={20} />} 
+                label="Custo de Taxas MDR" 
+                value={`- R$ ${stats.totalMachineFees.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Taxas retidas pelas adquirentes" 
+                color="#dc2626" 
+                trendType="neutral"
+                trendText="Intercâmbio" 
+              />
+              <StatCard 
+                icon={<DollarSign size={20} />} 
+                label="Lucro Real CM CRED" 
+                value={`R$ ${stats.totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Lucro líquido retido na empresa" 
+                color="#d97706" 
+                trendType="up"
+                trendText="Lucro Líquido" 
+              />
+            </>
+          ) : (
+            <>
+              <StatCard 
+                icon={<CreditCard size={20} />} 
+                label="Meu Volume Bruto (Cartão)" 
+                value={`R$ ${stats.totalApproved.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Valores totais de empréstimos passados no cartão" 
+                color="#3b82f6" 
+                trendType="down"
+                trendText="Saída Caixa" 
+              />
+              <StatCard 
+                icon={<TrendingDown size={20} />} 
+                label="Meus Repasses PIX" 
+                value={`R$ ${stats.totalPIX.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Líquido liberado a seus clientes" 
+                color="#ef4444" 
+                trendType="up"
+                trendText="Produção" 
+              />
+              <StatCard 
+                icon={<Layers size={20} />} 
+                label="Minhas Operações" 
+                value={`${stats.activeOperations} ops`} 
+                sub="Contratos concluídos" 
+                color="#059669" 
+                trendType="neutral"
+                trendText="Média" 
+              />
+              <StatCard 
+                icon={<Activity size={20} />} 
+                label="Ticket Médio" 
+                value={`R$ ${stats.averageTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                sub="Média por operação e valores totais realizados" 
+                color="#0ea5e9" 
+                trendType="neutral"
+                trendText="Média" 
+              />
+              {Number(currentUser?.commission_percentage || 0) > 0 && (
+                <StatCard 
+                  icon={<Award size={20} />} 
+                  label="Minha Comissão Gerada" 
+                  value={`R$ ${stats.totalCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+                  sub="Comissão acumulada na sua produção" 
+                  color="#f59e0b" 
+                  trendType="up"
+                  trendText="Comissão" 
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Secondary Operational Efficiency metrics - Exclusivo Admin */}
       {isAdmin && (
@@ -545,8 +630,11 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 12-Month Loan Evolution Bar Chart (Full Width Spotlight) */}
-      <div style={{ background: '#ffffff', border: '1px solid #f1f5f9', borderRadius: '24px', padding: '2rem', boxShadow: '0 4px 12px -2px rgba(0,0,0,0.03)' }}>
+      {/* Seção Vendas: Gráficos e Feed Operacional */}
+      {(isAdmin || activeTab === 'vendas') && (
+        <>
+          {/* 12-Month Loan Evolution Bar Chart (Full Width Spotlight) */}
+          <div style={{ background: '#ffffff', border: '1px solid #f1f5f9', borderRadius: '24px', padding: '2rem', boxShadow: '0 4px 12px -2px rgba(0,0,0,0.03)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1.25rem' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -805,8 +893,8 @@ const Dashboard: React.FC = () => {
               <thead>
                 <tr style={{ textAlign: 'left' }}>
                   {(isAdmin 
-                    ? ['Portador / Cliente', 'Maquininha', 'Prazo', 'Bruto Cartão', 'Repasse (PIX)', 'Lucro Líquido', 'Status']
-                    : ['Portador / Cliente', 'Maquininha', 'Prazo', 'Bruto Cartão', 'Repasse (PIX)', 'Status']
+                    ? ['Portador / Cliente', 'Operador', 'Maquininha', 'Prazo', 'Bruto Cartão', 'Repasse (PIX)', 'Lucro Líquido', 'Status']
+                    : ['Portador / Cliente', 'Operador', 'Maquininha', 'Prazo', 'Bruto Cartão', 'Repasse (PIX)', 'Status']
                   ).map(h => (
                     <th key={h} style={{ padding: '0.5rem 1rem', color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 800 }}>{h}</th>
                   ))}
@@ -815,7 +903,7 @@ const Dashboard: React.FC = () => {
               <tbody>
                 {recentLoans.length === 0 ? (
                   <tr>
-                    <td colSpan={isAdmin ? 7 : 6} style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>Nenhuma transação recente encontrada.</td>
+                    <td colSpan={isAdmin ? 8 : 7} style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>Nenhuma transação recente encontrada.</td>
                   </tr>
                 ) : recentLoans.map(loan => {
                   const fin = calculateLoanFinancials(loan);
@@ -832,6 +920,11 @@ const Dashboard: React.FC = () => {
                     <tr key={loan.id} style={{ background: '#f8fafc', transition: 'all 0.2s' }} className="dashboard-row">
                       <td style={{ padding: '0.85rem 1rem', borderRadius: '12px 0 0 12px' }}>
                         <div style={{ color: '#0f172a', fontWeight: 800, fontSize: '0.85rem' }}>{loan.clienteNome}</div>
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <div style={{ color: '#475569', fontWeight: 700, fontSize: '0.75rem' }}>
+                          {loan.consultant_name || 'Direta / Admin'}
+                        </div>
                       </td>
                       <td style={{ padding: '0.85rem 1rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#475569', fontWeight: 700, fontSize: '0.75rem' }}>
@@ -867,8 +960,88 @@ const Dashboard: React.FC = () => {
             </table>
           </div>
         </div>
-
       </div>
+    </>
+  )}
+
+      {/* Tabela Exclusiva para Consultor: Minhas Operações Realizadas */}
+      {isConsultant && activeTab === 'operacoes' && (
+        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '24px', padding: '2rem', boxShadow: '0 4px 12px -2px rgba(0,0,0,0.03)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Layers size={22} color="#d97706" /> Minhas Operações Concluídas
+              </h3>
+              <p style={{ margin: '0.25rem 0 0', color: '#64748b', fontSize: '0.85rem', fontWeight: 600 }}>
+                Acompanhamento de contratos concedidos aos seus clientes (apenas valores de empréstimo)
+              </p>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 800, background: '#f1f5f9', padding: '6px 12px', borderRadius: '8px' }}>
+              {myOperations.length} Contratos Realizados no seu Nome
+            </span>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+              <thead>
+                <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
+                  {['Contrato', 'Cliente', 'Operador', 'Data', 'Maquininha', 'Prazo', 'Total Cartão (Bruto)', 'Valor Concedido (PIX)', 'Status'].map((h, i) => (
+                    <th key={h} style={{ padding: '1rem', color: '#475569', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '2px solid #e2e8f0', textAlign: i >= 6 && i <= 7 ? 'right' : 'left' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {myOperations.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: '3.5rem', textAlign: 'center', color: '#94a3b8', fontWeight: 700 }}>
+                      Nenhuma operação realizada no seu nome até o momento.
+                    </td>
+                  </tr>
+                ) : myOperations.map(loan => {
+                  const fin = calculateLoanFinancials(loan);
+                  return (
+                    <tr key={loan.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      <td style={{ padding: '1rem', fontFamily: 'monospace', fontWeight: 800, color: '#94a3b8', fontSize: '0.8rem' }}>
+                        #{((loan.id || '').slice(0, 8)).toUpperCase()}
+                      </td>
+                      <td style={{ padding: '1rem', fontWeight: 800, color: '#0f172a' }}>
+                        {loan.clienteNome || 'Cliente Portador'}
+                      </td>
+                      <td style={{ padding: '1rem', color: '#0284c7', fontWeight: 700, fontSize: '0.85rem' }}>
+                        {loan.consultant_name || 'Operação Direta / Admin'}
+                      </td>
+                      <td style={{ padding: '1rem', color: '#64748b', fontSize: '0.85rem', fontWeight: 600 }}>
+                        {new Date(loan.created_at).toLocaleDateString('pt-BR')}
+                      </td>
+                      <td style={{ padding: '1rem', color: '#334155', fontWeight: 700, fontSize: '0.85rem' }}>
+                        {loan.machines?.name || 'Smart POS'}
+                      </td>
+                      <td style={{ padding: '1rem' }}>
+                        <span style={{ background: '#f1f5f9', color: '#0f172a', padding: '3px 8px', borderRadius: '8px', fontWeight: 800, fontSize: '0.8rem' }}>
+                          {fin.installments}x
+                        </span>
+                      </td>
+                      <td style={{ padding: '1rem', textAlign: 'right', color: '#2563eb', fontWeight: 900, fontSize: '0.95rem' }}>
+                        R$ {fin.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: '1rem', textAlign: 'right', color: '#059669', fontWeight: 900, fontSize: '0.95rem' }}>
+                        R$ {fin.netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: '1rem' }}>
+                        <span style={{ background: '#ecfdf5', color: '#059669', padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 800 }}>
+                          {loan.status === 'completed' ? 'Concluído' : (loan.status || 'Ativo')}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <style>{`
         .dashboard-card:hover { transform: translateY(-4px); box-shadow: 0 12px 20px -5px rgba(0,0,0,0.06) !important; }

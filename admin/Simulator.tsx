@@ -34,7 +34,7 @@ const Simulator: React.FC = () => {
   const { currentUser } = useAuth();
   const isAdmin = currentUser?.perfil === 'admin' ||
     currentUser?.email?.toLowerCase().includes('admin') ||
-    currentUser?.email?.toLowerCase().includes('cmcred');
+    currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br';
 
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
   const [tabelaTaxa, setTabelaTaxa] = useState<RateTableType>('tabela_1');
@@ -316,7 +316,9 @@ const Simulator: React.FC = () => {
                     }}
                   >
                     <span style={{ fontSize: '1rem', fontWeight: 900 }}>{opt.name}</span>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : '#94a3b8' }}>{opt.description}</span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : '#94a3b8' }}>
+                      {isAdmin ? opt.description : (opt.id === 'tabela_1' ? 'Matriz Padrão Oficial' : 'Matriz Reduzida Flex')}
+                    </span>
                   </button>
                 );
               })}
@@ -494,7 +496,7 @@ const Simulator: React.FC = () => {
                 {simulation.valorParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <div style={{ color: '#64748b', fontSize: '0.9rem', fontWeight: 700, marginTop: '0.25rem' }}>
-                {simulation.parcelas} parcelas no {selectedFlagObj.name} ({tabelaTaxa === 'tabela_1' ? 'Tabela 1' : 'Tabela 2'})
+                {simulation.parcelas} parcelas no {selectedFlagObj.name} {isAdmin ? `(${tabelaTaxa === 'tabela_1' ? 'Tabela 1' : 'Tabela 2'})` : ''}
               </div>
             </div>
 
@@ -531,12 +533,14 @@ const Simulator: React.FC = () => {
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#64748b', fontSize: '0.9rem', fontWeight: 600 }}>Total de Juros:</span>
-                <strong style={{ color: '#ef4444' }}>
-                  R$ {simulation.valorJuros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </strong>
-              </div>
+              {isAdmin && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#64748b', fontSize: '0.9rem', fontWeight: 600 }}>Total de Juros:</span>
+                  <strong style={{ color: '#ef4444' }}>
+                    R$ {simulation.valorJuros.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </strong>
+                </div>
+              )}
 
               <div style={{ borderTop: '2px dashed #e2e8f0', margin: '0.3rem 0' }} />
 

@@ -627,7 +627,68 @@ export function resolveMachineFeeRate({
   const inst = Math.min(18, Math.max(1, Number(installments) || 1));
   const flagKey = getFlagRateKey(cardFlag);
 
-  // 1. Extração fiel da observação gravada no momento do lançamento da operação
+  // 1. Campo explícito gravado no banco ou override manual no lançamento
+  if (explicitRate !== undefined && explicitRate !== null && Number(explicitRate) > 0) {
+    const rate = Number(explicitRate);
+    const amount = (explicitAmount !== undefined && explicitAmount !== null && Number(explicitAmount) > 0)
+      ? Number(Number(explicitAmount).toFixed(2))
+      : Number((grossAmount * (rate / 100)).toFixed(2));
+    return { rate, amount, source: 'database_field' };
+  }
+
+  if (explicitAmount !== undefined && explicitAmount !== null && Number(explicitAmount) > 0) {
+    const amount = Number(Number(explicitAmount).toFixed(2));
+    const rate = grossAmount > 0 ? Number(((amount / grossAmount) * 100).toFixed(2)) : 0;
+    return { rate, amount, source: 'database_field' };
+  }
+
+  // 2. Extrair da configuração dinâmica da maquininha cadastrada no banco pelo Administrador
+  if (machine) {
+    // 2a. Tabela por bandeira e parcelamento (rates_by_flag ou card_rates)
+    const flagRates = machine.card_rates?.[flagKey] ||
+      machine.installment_fees?.rates_by_flag?.[flagKey] ||
+      machine.installment_fees?.rates_by_flag?.[cardFlag || ''] ||
+      machine.installment_fees?.[flagKey];
+
+    if (flagRates && typeof flagRates === 'object') {
+      const rateVal = flagRates[inst] ?? flagRates[String(inst)] ?? flagRates[`${inst}x`];
+      if (rateVal !== undefined && rateVal !== null && Number(rateVal) > 0) {
+        const rate = Number(rateVal);
+        return {
+          rate,
+          amount: Number((grossAmount * (rate / 100)).toFixed(2)),
+          source: 'machine_flag_tier'
+        };
+      }
+    }
+
+    // 2b. Tabela direta de parcelas na máquina (1x a 18x)
+    if (machine.installment_fees && typeof machine.installment_fees === 'object') {
+      const feeVal = machine.installment_fees[inst] ??
+        machine.installment_fees[String(inst)] ??
+        machine.installment_fees[`${inst}x`];
+      if (feeVal !== undefined && feeVal !== null && Number(feeVal) > 0) {
+        const rate = Number(feeVal);
+        return {
+          rate,
+          amount: Number((grossAmount * (rate / 100)).toFixed(2)),
+          source: 'machine_tier'
+        };
+      }
+    }
+
+    // 2c. Taxa percentual geral da máquina
+    if (machine.fee_percentage !== undefined && machine.fee_percentage !== null && Number(machine.fee_percentage) > 0) {
+      const rate = Number(machine.fee_percentage);
+      return {
+        rate,
+        amount: Number((grossAmount * (rate / 100)).toFixed(2)),
+        source: 'machine_flat'
+      };
+    }
+  }
+
+  // 3. Extração fiel da observação (para contratos legados anteriores à migração)
   if (observations) {
     const retMatch = observations.match(/Retenção\s*([\d.,]+)%\s*=\s*R\$\s*([\d.,]+)/i);
     if (retMatch) {
@@ -641,27 +702,10 @@ export function resolveMachineFeeRate({
     if (singleMatch) {
       const rate = parseFloat(singleMatch[1].replace(',', '.'));
       if (!isNaN(rate)) {
-        const amount = (explicitAmount !== undefined && explicitAmount !== null && Number(explicitAmount) > 0)
-          ? Number(Number(explicitAmount).toFixed(2))
-          : Number((grossAmount * (rate / 100)).toFixed(2));
+        const amount = Number((grossAmount * (rate / 100)).toFixed(2));
         return { rate, amount, source: 'observation' };
       }
     }
-  }
-
-  // 2. Campo explícito no empréstimo (machine_fee_percentage / machine_fee_amount)
-  if (explicitRate !== undefined && explicitRate !== null && Number(explicitRate) > 0) {
-    const rate = Number(explicitRate);
-    const amount = (explicitAmount !== undefined && explicitAmount !== null && Number(explicitAmount) > 0)
-      ? Number(Number(explicitAmount).toFixed(2))
-      : Number((grossAmount * (rate / 100)).toFixed(2));
-    return { rate, amount, source: 'database_field' };
-  }
-
-  if (explicitAmount !== undefined && explicitAmount !== null && Number(explicitAmount) > 0) {
-    const amount = Number(Number(explicitAmount).toFixed(2));
-    const rate = grossAmount > 0 ? Number(((amount / grossAmount) * 100).toFixed(2)) : 0;
-    return { rate, amount, source: 'database_field' };
   }
 
   // 3. Extrair da configuração da maquininha cadastrada no banco

@@ -32,12 +32,13 @@ import {
 import { useAuth } from './AuthContext';
 import type { FinanceEntry, LoanRequest } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
+import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const Financeiro: React.FC = () => {
   const { addNotification, logAudit, currentUser, authUserEmail } = useAuth();
   
-  const isSuperAdmin = authUserEmail?.toLowerCase().includes('admin') || 
-                       authUserEmail?.toLowerCase().includes('cmcred') || 
+  const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
+                       currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 
@@ -77,12 +78,8 @@ const Financeiro: React.FC = () => {
       setLoading(true);
       
       let financeQuery = supabase.from('finance').select('*').order('due_date', { ascending: false });
+      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees)').order('created_at', { ascending: false });
-
-      // Se não for admin, carrega apenas os empréstimos atribuídos ao consultor
-      if (!isSuperAdmin && currentUser?.id) {
-        loansQuery = loansQuery.eq('consultant_id', currentUser.id);
-      }
 
       const now = new Date();
       if (dateRange === 'day') {
@@ -129,6 +126,9 @@ const Financeiro: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Atualização automática a cada 30 segundos e ao alternar de aba (sem F5)
+  useAutoRefresh(fetchData, 30000);
 
   // Sincronizar empréstimos com a tabela financeira
   // Garante que cada empréstimo tenha registrado o repasse PIX (a pagar/pago) e a entrada do cartão (a receber/recebido)
@@ -189,8 +189,14 @@ const Financeiro: React.FC = () => {
     }
   };
 
-  // DAR BAIXA / ESTORNAR BAIXA
+  // DAR BAIXA / ESTORNAR BAIXA (Restrito: Consultores não podem estornar)
   const handleToggleStatus = async (entry: FinanceEntry) => {
+    // Se a conta já está baixada/paga e o usuário tenta estornar:
+    if (entry.status === 'paid' && !isSuperAdmin) {
+      addNotification('Apenas administradores possuem permissão para estornar baixas (Proteção de Auditoria CM CRED).', 'alerta');
+      return;
+    }
+
     const newStatus = entry.status === 'paid' ? 'pending' : 'paid';
     const actionLabel = newStatus === 'paid' ? 'Baixa registrada' : 'Baixa estornada';
     try {
@@ -210,8 +216,12 @@ const Financeiro: React.FC = () => {
     }
   };
 
-  // Excluir Lançamento Manual
+  // Excluir Lançamento Manual (Restrito estritamente a administradores)
   const handleDeleteEntry = async (id: string, desc: string) => {
+    if (!isSuperAdmin) {
+      addNotification('Apenas administradores possuem permissão para excluir registros financeiros.', 'alerta');
+      return;
+    }
     if (!window.confirm(`Deseja realmente remover o lançamento "${desc}"?`)) return;
     try {
       const { error } = await supabase.from('finance').delete().eq('id', id);
@@ -219,9 +229,10 @@ const Financeiro: React.FC = () => {
 
       setData(prev => prev.filter(d => d.id !== id));
       addNotification('Lançamento removido com sucesso!', 'sucesso');
-      await logAudit('exclusão_financeira', `Removido lançamento: ${desc}`);
+      await logAudit('exclusão_financeira', `Lançamento removido: ${desc} (ID: ${id})`);
     } catch (err: any) {
-      addNotification('Erro ao remover: ' + err.message, 'alerta');
+      console.error('Erro ao excluir lançamento:', err);
+      addNotification('Erro ao excluir lançamento: ' + err.message, 'alerta');
     }
   };
 
@@ -1361,10 +1372,10 @@ const Financeiro: React.FC = () => {
                               >
                                 <Check size={14} /> Dar Baixa
                               </button>
-                            ) : (
+                            ) : isSuperAdmin ? (
                               <button
                                 onClick={() => handleToggleStatus(d)}
-                                title="Desfazer baixa e retornar ao status pendente"
+                                title="Desfazer baixa e retornar ao status pendente (Apenas Admin)"
                                 style={{
                                   background: '#f1f5f9',
                                   color: '#64748b',
@@ -1381,6 +1392,10 @@ const Financeiro: React.FC = () => {
                               >
                                 <RotateCcw size={12} /> Estornar
                               </button>
+                            ) : (
+                              <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: 800 }}>
+                                Liquidado
+                              </span>
                             )}
 
                             {/* Se for lançamento manual, permite excluir */}

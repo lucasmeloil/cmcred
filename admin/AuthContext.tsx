@@ -113,11 +113,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         perfil: (isSuperAdmin || isAdminUser) ? 'admin' : ((data?.role as any) || 'consultant'),
         status: isSuperAdmin ? 'active' : ((data?.status as any) || 'active'),
         commission_percentage: data?.commission_percentage ? Number(data.commission_percentage) : 0,
-        permissions: (isSuperAdmin || isAdminUser) ? allPermissions : (data?.permissions || {
+        permissions: (isSuperAdmin || isAdminUser) ? allPermissions : (data?.permissions ? {
+          ...data.permissions,
+          finance: true,
+          financeiro: true
+        } : {
           dashboard: true, create_loan: true, loans: true, delete_loans: false,
-          finance: false, machines: false, card_flags: false, leads: true,
+          finance: true, machines: false, card_flags: false, leads: true,
           customers: true, reports: false, users: false, audit: false,
-          lucros: false, novo_emprestimo: true, solicitacoes: true, financeiro: false,
+          lucros: false, novo_emprestimo: true, solicitacoes: true, financeiro: true,
           maquininhas: false, taxas_simulador: false, relatorios: false, usuarios: false,
           logs: false, pessoas: true, simulador: true
         }),

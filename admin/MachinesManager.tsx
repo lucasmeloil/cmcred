@@ -15,11 +15,36 @@ import {
   Sparkles,
   Calendar,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Calculator,
+  Sliders,
+  DollarSign,
+  TrendingUp,
+  Percent
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { DEFAULT_CARD_RATES, getCustomCardFlags, type CardFlagOption } from '../lib/rates';
+import { getCustomCardFlags, type CardFlagOption } from '../lib/rates';
 import type { Bank } from './types';
+
+// Baseline de custo MDR padrão de mercado para adquirentes (Stone, PagBank, Cielo, etc.)
+// 100% ajustável pelo administrador
+export const DEFAULT_MACHINE_MDR_RATES: Record<string, Record<number, number>> = {
+  "VISA_MASTER": {
+    1: 1.20, 2: 1.80, 3: 2.10, 4: 2.40, 5: 2.70, 6: 3.00,
+    7: 3.30, 8: 3.60, 9: 3.90, 10: 4.20, 11: 4.50,
+    12: 4.80, 13: 5.10, 14: 5.40, 15: 5.70, 16: 6.00, 17: 6.20, 18: 6.50
+  },
+  "BANESE/ELO": {
+    1: 1.80, 2: 2.40, 3: 2.80, 4: 3.10, 5: 3.50, 6: 3.90,
+    7: 4.20, 8: 4.60, 9: 4.90, 10: 5.30, 11: 5.60,
+    12: 6.00, 13: 6.30, 14: 6.70, 15: 7.00, 16: 7.30, 17: 7.60, 18: 8.00
+  },
+  "AMEX": {
+    1: 1.90, 2: 2.50, 3: 2.90, 4: 3.20, 5: 3.60, 6: 4.00,
+    7: 4.30, 8: 4.70, 9: 5.00, 10: 5.40, 11: 5.70,
+    12: 6.10, 13: 6.40, 14: 6.80, 15: 7.10, 16: 7.40, 17: 7.70, 18: 8.10
+  }
+};
 
 interface MachineModel {
   id: number;
@@ -55,10 +80,20 @@ const MachinesManager: React.FC = () => {
   const [formData, setFormData] = useState({
     name: '',
     bank_id: '',
-    fee_percentage: '0',
+    fee_percentage: '',
     liquidation_days: '1',
-    rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_CARD_RATES)) as Record<string, Record<number, number>>
+    fixed_fee: '0.00',
+    rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES)) as Record<string, Record<number, number>>
   });
+
+  // Ferramenta de Preenchimento em Lote
+  const [batchInitialRate, setBatchInitialRate] = useState('1.5');
+  const [batchStepRate, setBatchStepRate] = useState('0.3');
+
+  // Testador de Cálculo em Tempo Real no Cadastro
+  const [testAmount, setTestAmount] = useState<number>(1000);
+  const [testInstallments, setTestInstallments] = useState<number>(10);
+  const [testFlag, setTestFlag] = useState<string>('VISA_MASTER');
 
   const [newBankName, setNewBankName] = useState('');
   const flags = getCustomCardFlags();
@@ -76,7 +111,7 @@ const MachinesManager: React.FC = () => {
           ...m,
           bank_name: m.banks?.name || 'Banco Geral',
           installment_fees: m.installment_fees || {},
-          card_rates: m.installment_fees?.rates_by_flag || (m.installment_fees ? m.installment_fees : DEFAULT_CARD_RATES)
+          card_rates: m.installment_fees?.rates_by_flag || (m.installment_fees ? m.installment_fees : DEFAULT_MACHINE_MDR_RATES)
         })));
       }
       if (bankRes.data) setBanks(bankRes.data);
@@ -113,13 +148,50 @@ const MachinesManager: React.FC = () => {
     };
   }, []);
 
-  // Preencher com padrão do HTML
-  const handleLoadHtmlDefaults = () => {
+  // Preencher com sugestão de mercado de adquirentes (Stone/PagBank/Cielo)
+  const handleLoadMarketDefaults = () => {
     setFormData(prev => ({
       ...prev,
-      rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_CARD_RATES))
+      rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES))
     }));
-    addNotification('Taxas padrão oficiais do HTML carregadas!', 'sucesso');
+    addNotification('Taxas de referência de adquirente carregadas nos campos (100% editáveis)!', 'sucesso');
+  };
+
+  // Zerar todas as taxas para preenchimento manual livre
+  const handleZeroRates = () => {
+    const zeroObj: Record<string, Record<number, number>> = {};
+    flags.forEach(f => {
+      zeroObj[f.key] = {};
+      for (let i = 1; i <= 18; i++) {
+        zeroObj[f.key][i] = 0;
+      }
+    });
+    setFormData(prev => ({
+      ...prev,
+      rates_by_flag: zeroObj
+    }));
+    addNotification('Todas as taxas foram zeradas. Preencha os campos como desejar.', 'info');
+  };
+
+  // Preencher em lote na bandeira ativa
+  const handleApplyBatchRates = () => {
+    const start = parseFloat(batchInitialRate.replace(',', '.')) || 0;
+    const step = parseFloat(batchStepRate.replace(',', '.')) || 0;
+
+    setFormData(prev => {
+      const updatedFlagRates: Record<number, number> = {};
+      for (let i = 1; i <= 18; i++) {
+        updatedFlagRates[i] = Number((start + (i - 1) * step).toFixed(2));
+      }
+      return {
+        ...prev,
+        rates_by_flag: {
+          ...prev.rates_by_flag,
+          [activeFlagTab]: updatedFlagRates
+        }
+      };
+    });
+    addNotification(`Escalonamento aplicado na bandeira ${activeFlagTab}!`, 'sucesso');
   };
 
   // Alterar taxa individual na modal
@@ -146,13 +218,17 @@ const MachinesManager: React.FC = () => {
 
     setSaving(true);
     try {
+      const feePercentVal = parseFloat(formData.fee_percentage.replace(',', '.')) || null;
+      const fixedFeeVal = parseFloat(formData.fixed_fee.replace(',', '.')) || 0;
+
       const dataToSave = {
         name: formData.name.trim(),
         bank_id: formData.bank_id ? parseInt(formData.bank_id) : null,
-        fee_percentage: parseFloat(formData.fee_percentage.replace(',', '.')) || 0,
+        fee_percentage: feePercentVal,
         liquidation_days: parseInt(formData.liquidation_days) || 1,
         installment_fees: {
           rates_by_flag: formData.rates_by_flag,
+          fixed_fee: fixedFeeVal,
           // Compatibilidade com campos legados
           ...formData.rates_by_flag['VISA_MASTER']
         }
@@ -189,17 +265,25 @@ const MachinesManager: React.FC = () => {
   const handleEdit = (m: MachineModel) => {
     setEditingId(m.id);
     
-    // Tenta carregar as taxas da máquina ou usar as padrão
-    let machineRates = JSON.parse(JSON.stringify(DEFAULT_CARD_RATES));
+    // Tenta carregar as taxas da máquina ou usar as padrão de adquirente
+    let machineRates = JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES));
     if (m.installment_fees && m.installment_fees.rates_by_flag) {
       machineRates = m.installment_fees.rates_by_flag;
+    } else if (m.installment_fees) {
+      // Garante suporte a formatos legados
+      machineRates = {
+        'VISA_MASTER': { ...m.installment_fees },
+        'BANESE/ELO': { ...m.installment_fees },
+        'AMEX': { ...m.installment_fees }
+      };
     }
 
     setFormData({
       name: m.name,
       bank_id: m.bank_id ? m.bank_id.toString() : '',
-      fee_percentage: m.fee_percentage ? String(m.fee_percentage) : '0',
+      fee_percentage: m.fee_percentage !== undefined && m.fee_percentage !== null ? String(m.fee_percentage) : '',
       liquidation_days: m.liquidation_days ? String(m.liquidation_days) : '1',
+      fixed_fee: m.installment_fees?.fixed_fee ? String(m.installment_fees.fixed_fee) : '0.00',
       rates_by_flag: machineRates
     });
     setShowModal(true);
@@ -210,9 +294,10 @@ const MachinesManager: React.FC = () => {
     setFormData({
       name: '',
       bank_id: banks.length > 0 ? banks[0].id.toString() : '',
-      fee_percentage: '0',
+      fee_percentage: '',
       liquidation_days: '1',
-      rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_CARD_RATES))
+      fixed_fee: '0.00',
+      rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES))
     });
     setShowModal(true);
   };
@@ -260,6 +345,24 @@ const MachinesManager: React.FC = () => {
     (m.bank_name && m.bank_name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  // Cálculo da simulação de teste no modal
+  const simulatedRetention = (() => {
+    const flagRates = formData.rates_by_flag[testFlag] || {};
+    let rate = flagRates[testInstallments];
+    
+    // Se não encontrou por bandeira, tenta taxa geral flat
+    if (rate === undefined || rate === null) {
+      const flat = parseFloat(formData.fee_percentage.replace(',', '.'));
+      rate = !isNaN(flat) && flat > 0 ? flat : 0;
+    }
+
+    const fixed = parseFloat(formData.fixed_fee.replace(',', '.')) || 0;
+    const amount = Number((testAmount * (rate / 100) + fixed).toFixed(2));
+    const net = Number((testAmount - amount).toFixed(2));
+
+    return { rate, fixed, amount, net };
+  })();
+
   const inputStyle: React.CSSProperties = {
     background: '#ffffff',
     border: '1.5px solid #cbd5e1',
@@ -301,10 +404,10 @@ const MachinesManager: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2.5rem' }}>
         <div>
           <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Cpu size={34} color="#d97706" /> Gestão de Maquininhas POS
+            <Cpu size={34} color="#d97706" /> Gestão de Maquininhas POS & Retenção
           </h1>
           <p style={{ color: '#64748b', fontSize: '1rem', marginTop: '0.4rem', fontWeight: 500 }}>
-            Configure e cadastre equipamentos com as tabelas de taxas 1x a 18x exatas do simulador HTML salvas no banco de dados
+            Configuração 100% dinâmica e ajustável das taxas de retenção (MDR de adquirente) por parcela (1x a 18x) e bandeira
           </p>
         </div>
 
@@ -325,7 +428,7 @@ const MachinesManager: React.FC = () => {
                 alignItems: 'center', 
                 gap: '0.5rem', 
                 fontSize: '0.95rem',
-                boxShadow: '0 8px 16px -4px rgba(0,168,89,0.35)',
+                boxShadow: '0 8px 16px -4px rgba(217,119,6,0.35)',
                 transition: 'all 0.2s'
               }}
             >
@@ -362,7 +465,7 @@ const MachinesManager: React.FC = () => {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1.5rem' }}>
           {filteredMachines.map(m => {
-            const sampleRates = m.card_rates?.['VISA_MASTER'] || DEFAULT_CARD_RATES['VISA_MASTER'];
+            const sampleRates = m.card_rates?.['VISA_MASTER'] || m.installment_fees?.['VISA_MASTER'] || DEFAULT_MACHINE_MDR_RATES['VISA_MASTER'];
             return (
               <div 
                 key={m.id} 
@@ -382,12 +485,12 @@ const MachinesManager: React.FC = () => {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <div style={{ 
                       width: '52px', height: '52px', 
-                      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', 
+                      background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)', 
                       borderRadius: '16px', 
                       display: 'flex', alignItems: 'center', justifyContent: 'center', 
                       color: '#d97706',
                       fontSize: '1.5rem',
-                      boxShadow: '0 4px 10px rgba(0,168,89,0.15)'
+                      boxShadow: '0 4px 10px rgba(217,119,6,0.15)'
                     }}>
                       📟
                     </div>
@@ -405,7 +508,7 @@ const MachinesManager: React.FC = () => {
                         type="button" 
                         onClick={() => handleEdit(m)}
                         style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#0f172a', padding: '0.5rem', borderRadius: '10px', cursor: 'pointer' }}
-                        title="Editar"
+                        title="Editar Maquininha e Taxas"
                       >
                         <Edit3 size={15} color="#2563eb" />
                       </button>
@@ -428,9 +531,9 @@ const MachinesManager: React.FC = () => {
                     <strong style={{ fontSize: '1rem', color: '#d97706', fontWeight: 900 }}>D+{m.liquidation_days || 1} dia útil</strong>
                   </div>
                   <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block' }}>Status</span>
-                    <strong style={{ fontSize: '0.85rem', color: '#15803d', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                      <CheckCircle2 size={14} color="#15803d" /> Ativa no Balcão
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block' }}>Taxa Geral Flat</span>
+                    <strong style={{ fontSize: '0.9rem', color: m.fee_percentage ? '#0f172a' : '#94a3b8', fontWeight: 900 }}>
+                      {m.fee_percentage ? `${m.fee_percentage}%` : 'Por Parcela'}
                     </strong>
                   </div>
                 </div>
@@ -438,13 +541,13 @@ const MachinesManager: React.FC = () => {
                 {/* Resumo de Taxas da Máquina */}
                 <div style={{ background: '#f0fdf4', padding: '0.75rem', borderRadius: '14px', border: '1px solid #bbf7d0' }}>
                   <span style={{ fontSize: '0.7rem', color: '#047857', fontWeight: 800, textTransform: 'uppercase', display: 'block', marginBottom: '0.3rem' }}>
-                    Amostra de Taxas (VISA / MASTER):
+                    Retenção MDR (VISA / MASTER):
                   </span>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 800, color: '#0f172a' }}>
-                    <span>1x: <b style={{ color: '#ef4444' }}>{(sampleRates?.[1] ?? 5.5).toFixed(1)}%</b></span>
-                    <span>4x: <b style={{ color: '#ef4444' }}>{(sampleRates?.[4] ?? 8.0).toFixed(1)}%</b></span>
-                    <span>12x: <b style={{ color: '#ef4444' }}>{(sampleRates?.[12] ?? 13.0).toFixed(1)}%</b></span>
-                    <span>18x: <b style={{ color: '#ef4444' }}>{(sampleRates?.[18] ?? 18.5).toFixed(1)}%</b></span>
+                    <span>1x: <b style={{ color: '#059669' }}>{(sampleRates?.[1] ?? 1.2).toFixed(2)}%</b></span>
+                    <span>4x: <b style={{ color: '#059669' }}>{(sampleRates?.[4] ?? 2.4).toFixed(2)}%</b></span>
+                    <span>10x: <b style={{ color: '#059669' }}>{(sampleRates?.[10] ?? 4.2).toFixed(2)}%</b></span>
+                    <span>18x: <b style={{ color: '#059669' }}>{(sampleRates?.[18] ?? 6.5).toFixed(2)}%</b></span>
                   </div>
                 </div>
 
@@ -457,15 +560,15 @@ const MachinesManager: React.FC = () => {
       {/* MODAL DE CADASTRO / EDIÇÃO COMPLETA DE MAQUININHA */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem', backdropFilter: 'blur(6px)' }}>
-          <div style={{ background: '#ffffff', borderRadius: '28px', padding: '2.5rem', width: '100%', maxWidth: '850px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+          <div style={{ background: '#ffffff', borderRadius: '28px', padding: '2.5rem', width: '100%', maxWidth: '900px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
             
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 900, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                  <Cpu size={26} color="#d97706" /> {editingId ? 'Editar Maquininha POS' : 'Cadastrar Nova Maquininha POS'}
+                  <Cpu size={26} color="#d97706" /> {editingId ? 'Editar Maquininha POS & Retenção' : 'Cadastrar Nova Maquininha POS'}
                 </h2>
                 <p style={{ color: '#64748b', fontSize: '0.9rem', margin: '0.2rem 0 0', fontWeight: 500 }}>
-                  Configure os dados do terminal e as taxas de parcelamento 1x a 18x exatas do HTML.
+                  Configure as taxas de retenção que a maquininha cobra da CM CRED (100% ajustáveis pelo admin).
                 </p>
               </div>
 
@@ -476,16 +579,16 @@ const MachinesManager: React.FC = () => {
 
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
-              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '1rem' }}>
                 {/* Nome */}
                 <div>
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-                    Nome da Maquininha / Modelo
+                    Nome do Terminal / Modelo
                   </label>
                   <input 
                     type="text"
                     required
-                    placeholder="Ex: Stone Smart POS Balcão"
+                    placeholder="Ex: Stone Smart Balcão"
                     value={formData.name}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
                     style={inputStyle}
@@ -496,14 +599,14 @@ const MachinesManager: React.FC = () => {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                     <label style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', textTransform: 'uppercase' }}>
-                      Banco Vinculado
+                      Banco / Adquirente
                     </label>
                     <button 
                       type="button" 
                       onClick={() => setShowBankModal(true)} 
                       style={{ background: 'none', border: 'none', color: '#d97706', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 800 }}
                     >
-                      + NOVO BANCO
+                      + NOVO
                     </button>
                   </div>
                   <select 
@@ -511,7 +614,7 @@ const MachinesManager: React.FC = () => {
                     onChange={e => setFormData({ ...formData, bank_id: e.target.value })}
                     style={{ ...inputStyle, height: '48px' }}
                   >
-                    <option value="">Selecione a instituição...</option>
+                    <option value="">Selecione...</option>
                     {banks.map(b => (
                       <option key={b.id} value={b.id.toString()}>{b.name}</option>
                     ))}
@@ -534,39 +637,72 @@ const MachinesManager: React.FC = () => {
                     style={inputStyle}
                   />
                 </div>
+
+                {/* Taxa Fixa por Transação (R$) */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
+                    Taxa Fixa (R$)
+                  </label>
+                  <input 
+                    type="text"
+                    placeholder="0.00"
+                    value={formData.fixed_fee}
+                    onChange={e => setFormData({ ...formData, fixed_fee: e.target.value })}
+                    style={inputStyle}
+                  />
+                </div>
               </div>
 
-              {/* Bloco de Taxas 1x a 18x Conforme o HTML */}
+              {/* Bloco de Taxas 1x a 18x 100% Ajustáveis pelo Admin */}
               <div style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '20px', border: '1.5px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <div>
-                    <label style={{ display: 'block', color: '#0f172a', fontSize: '0.9rem', fontWeight: 900, textTransform: 'uppercase' }}>
-                      Tabela de Taxas por Bandeira da Maquininha (1x a 18x)
+                    <label style={{ display: 'block', color: '#0f172a', fontSize: '0.95rem', fontWeight: 900, textTransform: 'uppercase' }}>
+                      Grade de Retenção da Maquininha (1x a 18x)
                     </label>
                     <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
-                      Estrutura exata do arquivo HTML fornecido
+                      Digite a taxa que a adquirente desconta em cada quantidade de parcelas
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleLoadHtmlDefaults}
-                    style={{
-                      padding: '0.6rem 1rem',
-                      background: '#f0fdf4',
-                      border: '1.5px solid #bbf7d0',
-                      borderRadius: '12px',
-                      color: '#047857',
-                      fontWeight: 800,
-                      fontSize: '0.8rem',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.4rem'
-                    }}
-                  >
-                    <RotateCcw size={14} /> Carregar Padrão do HTML
-                  </button>
+                  {/* Ações Rápidas de Configuração */}
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={handleLoadMarketDefaults}
+                      style={{
+                        padding: '0.55rem 0.9rem',
+                        background: '#f0fdf4',
+                        border: '1.5px solid #bbf7d0',
+                        borderRadius: '10px',
+                        color: '#047857',
+                        fontWeight: 800,
+                        fontSize: '0.75rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem'
+                      }}
+                    >
+                      <RotateCcw size={13} /> Sugestão Stone/PagBank
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleZeroRates}
+                      style={{
+                        padding: '0.55rem 0.9rem',
+                        background: '#fef2f2',
+                        border: '1.5px solid #fecaca',
+                        borderRadius: '10px',
+                        color: '#dc2626',
+                        fontWeight: 800,
+                        fontSize: '0.75rem',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Zerar Campos
+                    </button>
+                  </div>
                 </div>
 
                 {/* Abas de Bandeira */}
@@ -600,10 +736,44 @@ const MachinesManager: React.FC = () => {
                   })}
                 </div>
 
-                {/* Grid 1x a 18x */}
+                {/* Ferramenta de Preenchimento em Lote para a Bandeira Ativa */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: '#ffffff', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#475569', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <Sliders size={14} color="#d97706" /> Preenchimento em Lote ({activeFlagTab}):
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 700 }}>Taxa 1x:</span>
+                    <input 
+                      type="text" 
+                      value={batchInitialRate} 
+                      onChange={e => setBatchInitialRate(e.target.value)} 
+                      style={{ width: '60px', padding: '0.35rem 0.5rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: 800, textAlign: 'center', fontSize: '0.8rem' }} 
+                    />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800 }}>%</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 700 }}>+ por parcela:</span>
+                    <input 
+                      type="text" 
+                      value={batchStepRate} 
+                      onChange={e => setBatchStepRate(e.target.value)} 
+                      style={{ width: '60px', padding: '0.35rem 0.5rem', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: 800, textAlign: 'center', fontSize: '0.8rem' }} 
+                    />
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800 }}>%</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleApplyBatchRates}
+                    style={{ background: '#0f172a', color: '#fff', border: 'none', padding: '0.4rem 0.8rem', borderRadius: '8px', fontWeight: 800, fontSize: '0.75rem', cursor: 'pointer' }}
+                  >
+                    Aplicar na Bandeira
+                  </button>
+                </div>
+
+                {/* Grid 1x a 18x editável */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '0.75rem' }}>
                   {Array.from({ length: 18 }, (_, i) => i + 1).map(n => {
-                    const currentRate = formData.rates_by_flag[activeFlagTab]?.[n] ?? (5.0 + n * 0.75);
+                    const currentRate = formData.rates_by_flag[activeFlagTab]?.[n] ?? 0;
                     return (
                       <div 
                         key={n}
@@ -649,6 +819,71 @@ const MachinesManager: React.FC = () => {
 
               </div>
 
+              {/* SIMULADOR DE CONFERÊNCIA EM TEMPO REAL NO CADASTRO */}
+              <div style={{ background: 'linear-gradient(135deg, #fef3c7 0%, #ffffff 100%)', padding: '1.5rem', borderRadius: '20px', border: '1.5px solid #fde68a' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <Calculator size={20} color="#d97706" />
+                  <h4 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 900 }}>
+                    Testador Instantâneo de Retenção
+                  </h4>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+                    (Confira o cálculo com as taxas configuradas acima antes de salvar)
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', alignItems: 'center' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Valor Bruto de Teste (R$)</label>
+                    <input 
+                      type="number"
+                      step="100"
+                      value={testAmount}
+                      onChange={e => setTestAmount(Math.max(1, Number(e.target.value)))}
+                      style={{ ...inputStyle, padding: '0.5rem 0.8rem', fontSize: '0.9rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Parcelas (1x a 18x)</label>
+                    <select
+                      value={testInstallments}
+                      onChange={e => setTestInstallments(Number(e.target.value))}
+                      style={{ ...inputStyle, padding: '0.5rem 0.8rem', fontSize: '0.9rem' }}
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i + 1).map(n => (
+                        <option key={n} value={n}>{n}x</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.2rem' }}>Bandeira</label>
+                    <select
+                      value={testFlag}
+                      onChange={e => setTestFlag(e.target.value)}
+                      style={{ ...inputStyle, padding: '0.5rem 0.8rem', fontSize: '0.9rem' }}
+                    >
+                      {flags.map(f => (
+                        <option key={f.key} value={f.key}>{f.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Resultado do Teste */}
+                  <div style={{ background: '#ffffff', padding: '0.85rem', borderRadius: '12px', border: '1.5px solid #d97706' }}>
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase' }}>
+                      Retenção: <strong style={{ color: '#dc2626' }}>{simulatedRetention.rate.toFixed(2)}%</strong>
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 900, color: '#dc2626', marginTop: '0.1rem' }}>
+                      - R$ {simulatedRetention.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 700, marginTop: '0.2rem' }}>
+                      Entra no Banco: R$ {simulatedRetention.net.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Botões de Ação */}
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button
@@ -685,7 +920,7 @@ const MachinesManager: React.FC = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '0.6rem',
-                    boxShadow: '0 8px 16px -4px rgba(0,168,89,0.35)'
+                    boxShadow: '0 8px 16px -4px rgba(217,119,6,0.35)'
                   }}
                 >
                   <Save size={20} /> {saving ? 'Salvando no Banco...' : editingId ? 'Salvar Alterações no Banco' : 'Cadastrar Maquininha no Banco'}

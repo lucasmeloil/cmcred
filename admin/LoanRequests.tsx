@@ -10,6 +10,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { LoanRequest, LoanStatus, LoanType, Bank, Machine } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
+import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const statusConfig: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
   'in analysis': { color: '#b45309', bg: '#fef3c7', icon: <Clock size={14} />, label: 'Em Análise' },
@@ -52,16 +53,12 @@ const LoanRequests: React.FC = () => {
   const fetchInitialData = useCallback(async () => {
     setLoading(true);
     try {
-      const isSuperAdmin = authUserEmail?.toLowerCase().includes('admin') || 
-                           authUserEmail?.toLowerCase().includes('cmcred') || 
-                           currentUser?.email?.toLowerCase().includes('caique') ||
+      const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
+                           currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
                            currentUser?.perfil === 'admin';
 
+      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
       let loansQuery = supabase.from('loans').select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
-
-      if (!isSuperAdmin && currentUser?.id) {
-        loansQuery = loansQuery.or(`consultant_id.eq.${currentUser.id},consultant_id.is.null`);
-      }
 
       const [loansRes, banksRes, machinesRes] = await Promise.all([
         loansQuery,
@@ -134,6 +131,9 @@ const LoanRequests: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [fetchInitialData]);
+
+  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
+  useAutoRefresh(fetchInitialData, 30000);
 
   const downloadReceipt = async (loan: LoanRequest) => {
     try {
@@ -443,6 +443,10 @@ const LoanRequests: React.FC = () => {
     return matchSearch && matchStatus && matchDate;
   });
 
+  const isAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
+                  currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
+                  currentUser?.perfil === 'admin';
+
   const totals = filtered.reduce((acc, l) => {
     const fin = calculateLoanFinancials(l);
     acc.gross += fin.grossAmount;
@@ -450,20 +454,19 @@ const LoanRequests: React.FC = () => {
     acc.operationProfit += fin.operationProfit;
     acc.machineFee += fin.machineFeeAmount;
     acc.companyProfit += fin.companyNetProfit;
-    acc.commission += fin.commissionAmount;
+    if (isAdmin || l.consultant_id === currentUser?.id) {
+      acc.commission += fin.commissionAmount;
+    }
     return acc;
   }, { gross: 0, net: 0, operationProfit: 0, machineFee: 0, companyProfit: 0, commission: 0 });
 
   const totalApproved = totals.gross;
   const totalRequested = totals.net;
+  const totalPIX = totals.net;
   const totalGrossProfit = Number(totals.operationProfit.toFixed(2));
   const totalMachineFee = Number(totals.machineFee.toFixed(2));
   const totalCompanyProfit = Number(totals.companyProfit.toFixed(2));
   const totalCommission = Number(totals.commission.toFixed(2));
-
-  const isAdmin = authUserEmail?.toLowerCase().includes('admin') || 
-                  authUserEmail?.toLowerCase().includes('cmcred') || 
-                  currentUser?.perfil === 'admin';
 
   return (
     <div style={{ padding: '2.5rem', display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
@@ -512,16 +515,37 @@ const LoanRequests: React.FC = () => {
           </>
         ) : (
           <>
-            <div style={{ background: '#d97706', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(0,168,89,0.12)' }}>
-                <div style={{ color: '#dcfce7', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Operações Registradas</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>{filtered.length} contratos</div>
-                <div style={{ fontSize: '0.72rem', color: '#bbf7d0', marginTop: '0.25rem', fontWeight: 600 }}>Total no período</div>
+            <div style={{ background: '#0f172a', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(15,23,42,0.12)' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Contratos Realizados</div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>{filtered.length} contratos</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '0.25rem', fontWeight: 600 }}>Empréstimos concedidos</div>
             </div>
+
+            <div style={{ background: '#2563eb', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(37,99,235,0.15)' }}>
+              <div style={{ color: '#bfdbfe', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Bruto (Cartão)</div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>R$ {totalApproved.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+              <div style={{ fontSize: '0.72rem', color: '#93c5fd', marginTop: '0.25rem', fontWeight: 600 }}>Total a passar no cartão</div>
+            </div>
+
+            <div style={{ background: '#059669', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(5,150,105,0.15)' }}>
+              <div style={{ color: '#a7f3d0', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Repassado (PIX)</div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>R$ {totalPIX.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+              <div style={{ fontSize: '0.72rem', color: '#6ee7b7', marginTop: '0.25rem', fontWeight: 600 }}>Líquido concedido aos clientes</div>
+            </div>
+
+            <div style={{ background: '#0284c7', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(2,132,199,0.15)' }}>
+              <div style={{ color: '#bae6fd', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ticket Médio Concedido</div>
+              <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>
+                R$ {(filtered.length ? (totalPIX / filtered.length) : 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: '#7dd3fc', marginTop: '0.25rem', fontWeight: 600 }}>Média liberada por operação</div>
+            </div>
+
             {totalCommission > 0 && (
-              <div style={{ background: '#d97706', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(217,119,6,0.12)' }}>
-                  <div style={{ color: '#fef3c7', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Minha Comissão Estimada</div>
-                  <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>R$ {totalCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                  <div style={{ fontSize: '0.72rem', color: '#fde68a', marginTop: '0.25rem', fontWeight: 600 }}>Comissão acumulada</div>
+              <div style={{ background: '#d97706', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(217,119,6,0.15)' }}>
+                <div style={{ color: '#fef3c7', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Minha Comissão Estimada</div>
+                <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>R$ {totalCommission.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                <div style={{ fontSize: '0.72rem', color: '#fde68a', marginTop: '0.25rem', fontWeight: 600 }}>Comissão acumulada na sua produção</div>
               </div>
             )}
           </>

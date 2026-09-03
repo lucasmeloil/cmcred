@@ -37,6 +37,7 @@ import {
   type RateTableType,
   TABLE_OPTIONS
 } from '../lib/rates';
+import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const CreateLoan: React.FC = () => {
   const { currentUser, addNotification, logAudit } = useAuth();
@@ -171,32 +172,45 @@ const CreateLoan: React.FC = () => {
     };
   }, [currentUser, rateTableType]);
 
+  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
+  useAutoRefresh(fetchData, 30000);
+
   // Atualizar a taxa padrão automaticamente ao trocar de tabela, bandeira ou quantidade de vezes
   useEffect(() => {
     const defaultRate = getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType);
     setFormData(prev => ({ ...prev, interest_rate: defaultRate }));
   }, [formData.card_flag_id, formData.installments, rateTableType]);
 
-  // Atualizar dados de PIX ao selecionar cliente existente
+  // Atualizar dados de PIX e cliente ao selecionar cliente existente
   const handleSelectCustomer = (customerId: string) => {
     const c = customers.find(item => item.id.toString() === customerId);
-    setFormData(prev => ({
-      ...prev,
-      customer_id: customerId,
-      lead_id: '',
-      pix_key: c?.pix_key || c?.cpf || prev.pix_key
-    }));
+    if (c) {
+      setFormData(prev => ({
+        ...prev,
+        customer_id: customerId,
+        lead_id: '',
+        manual_name: c.name || '',
+        manual_cpf: c.cpf || '',
+        manual_phone: c.phone || '',
+        pix_key: c.pix_key || c.cpf || prev.pix_key
+      }));
+    }
   };
 
   // Atualizar dados ao selecionar lead
   const handleSelectLead = (leadId: string) => {
     const l = leads.find(item => item.id.toString() === leadId);
-    setFormData(prev => ({
-      ...prev,
-      lead_id: leadId,
-      customer_id: '',
-      pix_key: l?.pix_key || l?.cpf || prev.pix_key
-    }));
+    if (l) {
+      setFormData(prev => ({
+        ...prev,
+        lead_id: leadId,
+        customer_id: '',
+        manual_name: l.name || '',
+        manual_cpf: l.cpf || '',
+        manual_phone: l.phone || '',
+        pix_key: l.pix_key || l.cpf || prev.pix_key
+      }));
+    }
   };
 
   // Formatação segura de moeda
@@ -309,6 +323,9 @@ const CreateLoan: React.FC = () => {
         interest_rate: formData.interest_rate,
         machine_id: formData.machine_id ? Number(formData.machine_id) || null : null,
         consultant_id: formData.consultant_id || (isConsultant ? currentUser?.id : null),
+        machine_fee_percentage: machFeePercent,
+        machine_fee_amount: machineFeeAmount,
+        net_bank_amount: Number((safeGrossAmount - machineFeeAmount).toFixed(2)),
         observations: `${formData.observations ? formData.observations + ' | ' : ''}Maquininha: ${machineLabel} (Retenção ${machFeePercent.toFixed(2)}% = R$ ${machineFeeAmount.toFixed(2)}) | Bandeira: ${formData.card_flag_id} | Canal: ${formData.channel} | PIX: ${formData.pix_key || 'Não informado'} | Final Cartão: ${formData.card_last_digits || 'N/A'}`,
         profit: operationProfit,
         consultant_commission_amount: consultantCommission,
@@ -617,10 +634,12 @@ const CreateLoan: React.FC = () => {
                 <option value="">Operação Direta da Empresa (Sem Consultor)</option>
               )}
               {['consultant', 'operator', 'manager'].includes(currentUser?.perfil || '') ? (
-                <option value={currentUser?.id}>{currentUser?.nome} (Sua Operação) — {currentUser?.commission_percentage || 0}% Comissão</option>
+                <option value={currentUser?.id}>{currentUser?.nome} (Sua Operação)</option>
               ) : (
                 consultants.map(c => (
-                  <option key={c.id} value={c.id}>{c.full_name} ({c.role.toUpperCase()}) — {c.commission_percentage}% de Comissão</option>
+                  <option key={c.id} value={c.id}>
+                    {c.full_name} ({c.role.toUpperCase()}) {isAdmin ? `— ${c.commission_percentage}% de Comissão` : ''}
+                  </option>
                 ))
               )}
             </select>
@@ -896,7 +915,7 @@ const CreateLoan: React.FC = () => {
                 <span style={{ color: '#854d0e', fontSize: '0.75rem', display: 'block', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Sua Comissão Prevista</span>
                 <span style={{ color: '#ca8a04', fontWeight: 900, fontSize: '1.5rem' }}>R$ {formatCurrency(consultantCommission)}</span>
                 <div style={{ fontSize: '0.8rem', color: '#a16207', marginTop: '0.4rem', fontWeight: 700 }}>
-                  {consultantCommPercent}% sobre os juros
+                  Previsão de comissão da operação
                 </div>
               </div>
             )}
