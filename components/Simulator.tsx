@@ -21,13 +21,16 @@ const Simulator: React.FC = () => {
   const [selectedFlagKey, setSelectedFlagKey] = useState<string>('VISA_MASTER');
 
   useEffect(() => {
+    let isMounted = true;
     fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
+      if (!isMounted) return;
       if (dbFlags && dbFlags.length > 0) {
         setFlags(dbFlags);
       }
-    });
+    }).catch(err => console.warn('Aviso ao carregar taxas no simulador público:', err));
 
     const handleUpdate = () => {
+      if (!isMounted) return;
       setFlags(getCustomCardFlags());
     };
     window.addEventListener('cmcred_rates_updated', handleUpdate);
@@ -35,6 +38,7 @@ const Simulator: React.FC = () => {
     window.addEventListener('bonuscred_rates_updated', handleUpdate);
     window.addEventListener('bonuscred_flags_updated', handleUpdate);
     return () => {
+      isMounted = false;
       window.removeEventListener('cmcred_rates_updated', handleUpdate);
       window.removeEventListener('cmcred_flags_updated', handleUpdate);
       window.removeEventListener('bonuscred_rates_updated', handleUpdate);

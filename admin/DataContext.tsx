@@ -189,28 +189,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isSuperAdmin, currentUser?.id]);
 
   // =======================================================================
-  // 1. REVALIDAÇÃO NO RETORNO À ABA (visibilitychange & window.focus)
+  // 1. REVALIDAÇÃO CONTROLADA NO RETORNO À ABA (visibilitychange com cooldown)
   // =======================================================================
+  const lastVisibilitySyncRef = useRef<number>(Date.now());
+
   useEffect(() => {
     revalidateAll(false);
 
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        // Quando o usuário volta para a aba, revalida silenciosamente no background sem piscar a tela
-        revalidateAll(true);
+        const now = Date.now();
+        // Só revalida do banco se a aba ficou inativa por mais de 60 segundos,
+        // pois o Realtime do Supabase já atualiza as alterações instantaneamente
+        if (now - lastVisibilitySyncRef.current > 60000) {
+          lastVisibilitySyncRef.current = now;
+          revalidateAll(true);
+        }
       }
     };
 
-    const handleFocus = () => {
-      revalidateAll(true);
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
     };
   }, [revalidateAll]);
 

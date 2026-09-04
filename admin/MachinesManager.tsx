@@ -255,11 +255,14 @@ const MachinesManager: React.FC = () => {
         }
       });
 
+      const parsedDays = parseInt(formData.liquidation_days);
+      const cleanLiquidationDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : 1;
+
       const dataToSave = {
         name: formData.name.trim(),
         bank_id: formData.bank_id ? parseInt(formData.bank_id) : null,
         fee_percentage: feePercentVal,
-        liquidation_days: parseInt(formData.liquidation_days) || 1,
+        liquidation_days: cleanLiquidationDays,
         installment_fees: {
           rates_by_flag: cleanRatesByFlag,
           fixed_fee: fixedFeeVal,
@@ -343,7 +346,7 @@ const MachinesManager: React.FC = () => {
       name: m.name,
       bank_id: m.bank_id ? m.bank_id.toString() : '',
       fee_percentage: m.fee_percentage !== undefined && m.fee_percentage !== null ? String(m.fee_percentage) : '',
-      liquidation_days: m.liquidation_days ? String(m.liquidation_days) : '1',
+      liquidation_days: (m.liquidation_days !== undefined && m.liquidation_days !== null && !isNaN(Number(m.liquidation_days))) ? String(m.liquidation_days) : '1',
       fixed_fee: m.installment_fees?.fixed_fee ? String(m.installment_fees.fixed_fee) : '0.00',
       rates_by_flag: machineRates
     });

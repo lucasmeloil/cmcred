@@ -7,13 +7,19 @@ if (!supabaseUrl || !supabaseKey) {
   throw new Error('Supabase URL ou chave não encontradas. Verifique o arquivo .env');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-    // Elimina deadlock do navigator.locks que trava requisições no F5/recarregamento
-    lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => await fn()
-  }
-});
+// Garante uma única instância singleton global do client Supabase
+const globalObj = (typeof window !== 'undefined' ? window : globalThis) as any;
+
+export const supabase = globalObj.__cmcred_supabase_client__ || (
+  (globalObj.__cmcred_supabase_client__ = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+      // Elimina deadlock do navigator.locks que trava requisições no F5/recarregamento
+      lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => await fn()
+    }
+  }))
+);
+

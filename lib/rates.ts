@@ -146,126 +146,158 @@ export function getCustomCardFlags(): CardFlagOption[] {
 // MÉTODOS CRUD DIRETO NO BANCO DE DADOS (SUPABASE)
 // =========================================================================
 
+// Variáveis de controle de deduplicação e cache
+let inFlightRatesPromise: Promise<{
+  ratesT1: Record<string, Record<number, number>>;
+  ratesT2: Record<string, Record<number, number>>;
+  flags: CardFlagOption[];
+}> | null = null;
+let lastRatesFetchTime = 0;
+const RATES_CACHE_TTL_MS = 30000; // 30 segundos de cache para leituras repetidas
+
 // 1. GET: Buscar todas as taxas e bandeiras do banco de dados com máxima resiliência
-export async function fetchRatesFromDatabase(): Promise<{
+export async function fetchRatesFromDatabase(forceRefresh = false): Promise<{
   ratesT1: Record<string, Record<number, number>>;
   ratesT2: Record<string, Record<number, number>>;
   flags: CardFlagOption[];
 }> {
-  try {
-    let res = await supabase
-      .from('simulator_rates')
-      .select('*')
-      .order('id');
-
-    // Se falhar ou vier vazio, tenta supabaseAdmin com service_role_key
-    if ((res.error || !res.data || res.data.length === 0) && supabaseAdmin) {
-      try {
-        const adminRes = await supabaseAdmin
-          .from('simulator_rates')
-          .select('*')
-          .order('id');
-        if (adminRes.data && adminRes.data.length > 0) {
-          res = adminRes;
-        }
-      } catch (adminErr) {
-        console.warn('Fallback supabaseAdmin na leitura de taxas:', adminErr);
-      }
-    }
-
-    const { data, error } = res;
-
-    if (error && (!data || data.length === 0)) {
-      console.warn('Aviso ao consultar simulator_rates no banco:', error.message);
-      return {
-        ratesT1: getCustomCardRates('tabela_1'),
-        ratesT2: getCustomCardRates('tabela_2'),
-        flags: getCustomCardFlags()
-      };
-    }
-
-    if (data && data.length > 0) {
-      const fetchedRatesT1: Record<string, Record<number, number>> = {};
-      const fetchedRatesT2: Record<string, Record<number, number>> = {};
-      const fetchedFlags: CardFlagOption[] = [];
-
-      data.forEach((row: any) => {
-        const key = row.id;
-        const ratesObj1: Record<number, number> = {};
-        const ratesObj2: Record<number, number> = {};
-
-        // Extração flexível e robusta de T1 e T2
-        let rawT1: any = null;
-        let rawT2: any = null;
-
-        if (row.installment_rates?.t1 && typeof row.installment_rates.t1 === 'object') {
-          rawT1 = row.installment_rates.t1;
-        } else if (row.installment_rates_t1 && typeof row.installment_rates_t1 === 'object') {
-          rawT1 = row.installment_rates_t1;
-        }
-
-        if (row.installment_rates?.t2 && typeof row.installment_rates.t2 === 'object') {
-          rawT2 = row.installment_rates.t2;
-        } else if (row.installment_rates_t2 && typeof row.installment_rates_t2 === 'object') {
-          rawT2 = row.installment_rates_t2;
-        }
-
-        // Se o registro no banco for o formato antigo plano (ex: {"1": 5.5, ...})
-        if (!rawT1 && !rawT2 && row.installment_rates && typeof row.installment_rates === 'object' && !row.installment_rates.t1) {
-          const firstRate = Number(row.installment_rates[1] ?? row.installment_rates['1'] ?? 0);
-          if (firstRate > 0 && firstRate <= 6.5) {
-            rawT2 = row.installment_rates;
-            rawT1 = TABELA_1_RATES[key] || {};
-          } else if (firstRate > 6.5) {
-            rawT1 = row.installment_rates;
-            rawT2 = TABELA_2_RATES[key] || {};
-          }
-        }
-
-        if (!rawT1) rawT1 = TABELA_1_RATES[key] || {};
-        if (!rawT2) rawT2 = TABELA_2_RATES[key] || {};
-
-        for (let i = 1; i <= 18; i++) {
-          const val1 = rawT1[i] ?? rawT1[String(i)] ?? TABELA_1_RATES[key]?.[i] ?? 0;
-          const val2 = rawT2[i] ?? rawT2[String(i)] ?? TABELA_2_RATES[key]?.[i] ?? 0;
-          ratesObj1[i] = Number(Number(val1).toFixed(2));
-          ratesObj2[i] = Number(Number(val2).toFixed(2));
-        }
-
-        fetchedRatesT1[key] = ratesObj1;
-        fetchedRatesT2[key] = ratesObj2;
-
-        fetchedFlags.push({
-          id: key.toLowerCase(),
-          key: key,
-          name: row.name || key,
-          icon: row.icon || '💳',
-          color: row.color || '#00a859'
-        });
-      });
-
-      // Atualiza memória e localStorage
-      memoryRatesT1 = fetchedRatesT1;
-      memoryRatesT2 = fetchedRatesT2;
-      memoryFlags = fetchedFlags;
-      localStorage.setItem(LOCAL_STORAGE_RATES_T1_KEY, JSON.stringify(fetchedRatesT1));
-      localStorage.setItem(LOCAL_STORAGE_RATES_T2_KEY, JSON.stringify(fetchedRatesT2));
-      localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(fetchedFlags));
-
-      dispatchRatesEvents({ t1: fetchedRatesT1, t2: fetchedRatesT2 });
-      dispatchFlagsEvents(fetchedFlags);
-
-      return { ratesT1: fetchedRatesT1, ratesT2: fetchedRatesT2, flags: fetchedFlags };
-    }
-  } catch (err) {
-    console.error('Erro na requisição de taxas do banco:', err);
+  // Se não for forçado e já houver uma requisição em andamento, reaproveita a mesma Promise (deduplicação)
+  if (!forceRefresh && inFlightRatesPromise) {
+    return inFlightRatesPromise;
   }
-  return {
-    ratesT1: getCustomCardRates('tabela_1'),
-    ratesT2: getCustomCardRates('tabela_2'),
-    flags: getCustomCardFlags()
-  };
+
+  // Se não for forçado e o cache estiver fresco com bandeiras válidas, retorna imediatamente sem requisição de rede
+  if (!forceRefresh && (Date.now() - lastRatesFetchTime < RATES_CACHE_TTL_MS) && memoryFlags.length > 0) {
+    return {
+      ratesT1: memoryRatesT1 && Object.keys(memoryRatesT1).length > 0 ? memoryRatesT1 : getCustomCardRates('tabela_1'),
+      ratesT2: memoryRatesT2 && Object.keys(memoryRatesT2).length > 0 ? memoryRatesT2 : getCustomCardRates('tabela_2'),
+      flags: memoryFlags
+    };
+  }
+
+  inFlightRatesPromise = (async () => {
+    try {
+      let res = await supabase
+        .from('simulator_rates')
+        .select('*')
+        .order('id');
+
+      // Se falhar ou vier vazio, tenta supabaseAdmin com service_role_key
+      if ((res.error || !res.data || res.data.length === 0) && supabaseAdmin) {
+        try {
+          const adminRes = await supabaseAdmin
+            .from('simulator_rates')
+            .select('*')
+            .order('id');
+          if (adminRes.data && adminRes.data.length > 0) {
+            res = adminRes;
+          }
+        } catch (adminErr) {
+          console.warn('Fallback supabaseAdmin na leitura de taxas:', adminErr);
+        }
+      }
+
+      const { data, error } = res;
+
+      if (error && (!data || data.length === 0)) {
+        console.warn('Aviso ao consultar simulator_rates no banco:', error.message);
+        return {
+          ratesT1: getCustomCardRates('tabela_1'),
+          ratesT2: getCustomCardRates('tabela_2'),
+          flags: getCustomCardFlags()
+        };
+      }
+
+      if (data && data.length > 0) {
+        const fetchedRatesT1: Record<string, Record<number, number>> = {};
+        const fetchedRatesT2: Record<string, Record<number, number>> = {};
+        const fetchedFlags: CardFlagOption[] = [];
+
+        data.forEach((row: any) => {
+          const key = row.id;
+          const ratesObj1: Record<number, number> = {};
+          const ratesObj2: Record<number, number> = {};
+
+          // Extração flexível e robusta de T1 e T2
+          let rawT1: any = null;
+          let rawT2: any = null;
+
+          if (row.installment_rates?.t1 && typeof row.installment_rates.t1 === 'object') {
+            rawT1 = row.installment_rates.t1;
+          } else if (row.installment_rates_t1 && typeof row.installment_rates_t1 === 'object') {
+            rawT1 = row.installment_rates_t1;
+          }
+
+          if (row.installment_rates?.t2 && typeof row.installment_rates.t2 === 'object') {
+            rawT2 = row.installment_rates.t2;
+          } else if (row.installment_rates_t2 && typeof row.installment_rates_t2 === 'object') {
+            rawT2 = row.installment_rates_t2;
+          }
+
+          // Se o registro no banco for o formato antigo plano (ex: {"1": 5.5, ...})
+          if (!rawT1 && !rawT2 && row.installment_rates && typeof row.installment_rates === 'object' && !row.installment_rates.t1) {
+            const firstRate = Number(row.installment_rates[1] ?? row.installment_rates['1'] ?? 0);
+            if (firstRate > 0 && firstRate <= 6.5) {
+              rawT2 = row.installment_rates;
+              rawT1 = TABELA_1_RATES[key] || {};
+            } else if (firstRate > 6.5) {
+              rawT1 = row.installment_rates;
+              rawT2 = TABELA_2_RATES[key] || {};
+            }
+          }
+
+          if (!rawT1) rawT1 = TABELA_1_RATES[key] || {};
+          if (!rawT2) rawT2 = TABELA_2_RATES[key] || {};
+
+          for (let i = 1; i <= 18; i++) {
+            const val1 = rawT1[i] ?? rawT1[String(i)] ?? TABELA_1_RATES[key]?.[i] ?? 0;
+            const val2 = rawT2[i] ?? rawT2[String(i)] ?? TABELA_2_RATES[key]?.[i] ?? 0;
+            ratesObj1[i] = Number(Number(val1).toFixed(2));
+            ratesObj2[i] = Number(Number(val2).toFixed(2));
+          }
+
+          fetchedRatesT1[key] = ratesObj1;
+          fetchedRatesT2[key] = ratesObj2;
+
+          fetchedFlags.push({
+            id: key.toLowerCase(),
+            key: key,
+            name: row.name || key,
+            icon: row.icon || '💳',
+            color: row.color || '#00a859'
+          });
+        });
+
+        // Atualiza memória e localStorage
+        memoryRatesT1 = fetchedRatesT1;
+        memoryRatesT2 = fetchedRatesT2;
+        memoryFlags = fetchedFlags;
+        localStorage.setItem(LOCAL_STORAGE_RATES_T1_KEY, JSON.stringify(fetchedRatesT1));
+        localStorage.setItem(LOCAL_STORAGE_RATES_T2_KEY, JSON.stringify(fetchedRatesT2));
+        localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(fetchedFlags));
+
+        lastRatesFetchTime = Date.now();
+
+        // NOTA CRÍTICA: NÃO disparar dispatchRatesEvents ou dispatchFlagsEvents aqui!
+        // O fetch é uma operação de LEITURA. Disparar eventos aqui causava loop infinito de re-fetch.
+        return { ratesT1: fetchedRatesT1, ratesT2: fetchedRatesT2, flags: fetchedFlags };
+      }
+    } catch (err) {
+      console.error('Erro na requisição de taxas do banco:', err);
+    } finally {
+      inFlightRatesPromise = null;
+    }
+
+    return {
+      ratesT1: getCustomCardRates('tabela_1'),
+      ratesT2: getCustomCardRates('tabela_2'),
+      flags: getCustomCardFlags()
+    };
+  })();
+
+  return inFlightRatesPromise;
 }
+
 
 // 2. POST / PUT: Salvar/Atualizar uma bandeira e suas taxas no banco de dados
 export async function saveRateToDatabase(
@@ -339,6 +371,10 @@ export async function saveRateToDatabase(
     }
     memoryFlags = currentFlags;
     localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(currentFlags));
+
+    // Invalida cache de leitura para que qualquer novo fetch busque os dados frescos
+    lastRatesFetchTime = 0;
+    inFlightRatesPromise = null;
 
     dispatchRatesEvents({ tableType, rates: isT1 ? memoryRatesT1 : memoryRatesT2 });
     dispatchFlagsEvents(currentFlags);
@@ -421,6 +457,10 @@ export async function saveAllRatesToDatabase(
     memoryFlags = flags;
     localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(flags));
 
+    // Invalida cache de leitura para garantir dados frescos no próximo fetch
+    lastRatesFetchTime = 0;
+    inFlightRatesPromise = null;
+
     dispatchRatesEvents({ tableType, rates });
     dispatchFlagsEvents(flags);
 
@@ -467,6 +507,10 @@ export async function deleteRateFromDatabase(flagKey: string): Promise<{ success
     const currentFlags = getCustomCardFlags().filter(f => f.key !== flagKey);
     memoryFlags = currentFlags;
     localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(currentFlags));
+
+    // Invalida cache de leitura
+    lastRatesFetchTime = 0;
+    inFlightRatesPromise = null;
 
     dispatchRatesEvents({ t1: currentRates1, t2: currentRates2 });
     dispatchFlagsEvents(currentFlags);
@@ -516,6 +560,10 @@ export async function resetAllRatesInDatabase(tableType?: RateTableType): Promis
 
     memoryFlags = defaultFlags;
     localStorage.setItem(LOCAL_STORAGE_FLAGS_KEY, JSON.stringify(defaultFlags));
+
+    // Invalida cache de leitura
+    lastRatesFetchTime = 0;
+    inFlightRatesPromise = null;
 
     dispatchRatesEvents({ t1: memoryRatesT1, t2: memoryRatesT2 });
     dispatchFlagsEvents(defaultFlags);

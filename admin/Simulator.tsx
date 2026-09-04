@@ -49,42 +49,77 @@ const Simulator: React.FC = () => {
   const [ratesVersion, setRatesVersion] = useState(0);
 
   useEffect(() => {
+    let isMounted = true;
+    let debounceTimer: any = null;
+
+    // 1. Busca inicial apenas na montagem do componente
     fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
+      if (!isMounted) return;
       if (dbFlags && dbFlags.length > 0) {
         setFlags(dbFlags);
       }
       setRatesVersion(v => v + 1);
-    });
+    }).catch(err => console.warn('Aviso ao carregar taxas no simulador:', err));
 
-    const handleUpdate = () => {
-      fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
-        if (dbFlags && dbFlags.length > 0) {
-          setFlags(dbFlags);
-        }
-        setRatesVersion(v => v + 1);
-      });
+    // 2. Ouvinte de eventos locais: sincroniza instantaneamente da memória/localStorage sem fazer fetch HTTP!
+    const handleLocalUpdate = () => {
+      if (!isMounted) return;
+      const updatedFlags = getCustomCardFlags();
+      if (updatedFlags && updatedFlags.length > 0) {
+        setFlags(updatedFlags);
+      }
+      setRatesVersion(v => v + 1);
     };
-    window.addEventListener('cmcred_rates_updated', handleUpdate);
-    window.addEventListener('cmcred_flags_updated', handleUpdate);
-    window.addEventListener('bonuscred_rates_updated', handleUpdate);
-    window.addEventListener('bonuscred_flags_updated', handleUpdate);
 
+    window.addEventListener('cmcred_rates_updated', handleLocalUpdate);
+    window.addEventListener('cmcred_flags_updated', handleLocalUpdate);
+    window.addEventListener('bonuscred_rates_updated', handleLocalUpdate);
+    window.addEventListener('bonuscred_flags_updated', handleLocalUpdate);
+
+    // 3. Realtime do Supabase: somente dispara se a aba estiver visível e com debounce de 1s
     const channel = supabase
       .channel('simulator-rates-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'simulator_rates' },
         () => {
-          handleUpdate();
+          if (!isMounted) return;
+          // Pausa se o usuário estiver em outra aba para economizar recursos e evitar ban
+          if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+            return;
+          }
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            if (!isMounted) return;
+            fetchRatesFromDatabase(true).then(({ flags: dbFlags }) => {
+              if (!isMounted) return;
+              if (dbFlags && dbFlags.length > 0) {
+                setFlags(dbFlags);
+              }
+              setRatesVersion(v => v + 1);
+            });
+          }, 1000);
         }
       )
       .subscribe();
 
+    // 4. Ao alternar abas: sincroniza apenas do cache local sem floodar o Supabase
+    const handleVisibilityChange = () => {
+      if (!isMounted) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        handleLocalUpdate();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
-      window.removeEventListener('cmcred_rates_updated', handleUpdate);
-      window.removeEventListener('cmcred_flags_updated', handleUpdate);
-      window.removeEventListener('bonuscred_rates_updated', handleUpdate);
-      window.removeEventListener('bonuscred_flags_updated', handleUpdate);
+      isMounted = false;
+      clearTimeout(debounceTimer);
+      window.removeEventListener('cmcred_rates_updated', handleLocalUpdate);
+      window.removeEventListener('cmcred_flags_updated', handleLocalUpdate);
+      window.removeEventListener('bonuscred_rates_updated', handleLocalUpdate);
+      window.removeEventListener('bonuscred_flags_updated', handleLocalUpdate);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       supabase.removeChannel(channel);
     };
   }, []);
