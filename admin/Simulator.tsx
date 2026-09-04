@@ -57,11 +57,17 @@ const Simulator: React.FC = () => {
     });
 
     const handleUpdate = () => {
-      setFlags(getCustomCardFlags());
-      setRatesVersion(v => v + 1);
+      fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
+        if (dbFlags && dbFlags.length > 0) {
+          setFlags(dbFlags);
+        }
+        setRatesVersion(v => v + 1);
+      });
     };
     window.addEventListener('cmcred_rates_updated', handleUpdate);
     window.addEventListener('cmcred_flags_updated', handleUpdate);
+    window.addEventListener('bonuscred_rates_updated', handleUpdate);
+    window.addEventListener('bonuscred_flags_updated', handleUpdate);
 
     const channel = supabase
       .channel('simulator-rates-realtime')
@@ -69,12 +75,7 @@ const Simulator: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'simulator_rates' },
         () => {
-          fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
-            if (dbFlags && dbFlags.length > 0) {
-              setFlags(dbFlags);
-            }
-            setRatesVersion(v => v + 1);
-          });
+          handleUpdate();
         }
       )
       .subscribe();
@@ -82,6 +83,8 @@ const Simulator: React.FC = () => {
     return () => {
       window.removeEventListener('cmcred_rates_updated', handleUpdate);
       window.removeEventListener('cmcred_flags_updated', handleUpdate);
+      window.removeEventListener('bonuscred_rates_updated', handleUpdate);
+      window.removeEventListener('bonuscred_flags_updated', handleUpdate);
       supabase.removeChannel(channel);
     };
   }, []);

@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
+import MachinesManager from './MachinesManager';
 import { 
   getCustomCardRates, 
   getCustomCardFlags,
@@ -40,15 +42,6 @@ import {
 } from '../lib/rates';
 import { RateInput } from './RateInput';
 
-
-interface MachineItem {
-  id: number;
-  name: string;
-  bank_id?: number | null;
-  liquidation_days?: number;
-  fee_percentage?: number;
-  installment_fees?: Record<string, number>;
-}
 
 const RatesSettingsManager: React.FC = () => {
   const { currentUser, addNotification, logAudit } = useAuth();
@@ -79,16 +72,6 @@ const RatesSettingsManager: React.FC = () => {
 
   const currentRates = activeTable === 'tabela_1' ? ratesT1 : ratesT2;
 
-  // Estados de Maquininhas
-  const [machines, setMachines] = useState<MachineItem[]>([]);
-  const [loadingMachines, setLoadingMachines] = useState<boolean>(false);
-  const [showMachineModal, setShowMachineModal] = useState<boolean>(false);
-  const [editingMachine, setEditingMachine] = useState<MachineItem | null>(null);
-  const [machineFormData, setMachineFormData] = useState({
-    name: '',
-    liquidation_days: 1
-  });
-
   // Carregar dados diretamente do Banco de Dados Supabase ao iniciar
   const loadDatabaseRates = async () => {
     setLoading(true);
@@ -113,24 +96,6 @@ const RatesSettingsManager: React.FC = () => {
     }
   };
 
-  // Carregar Maquininhas do Banco
-  const loadMachines = async () => {
-    setLoadingMachines(true);
-    try {
-      const { data, error } = await supabase
-        .from('machines')
-        .select('*')
-        .order('name');
-      
-      if (error) throw error;
-      if (data) setMachines(data);
-    } catch (err: any) {
-      console.error('Erro ao carregar maquininhas:', err);
-    } finally {
-      setLoadingMachines(false);
-    }
-  };
-
   const latestRef = React.useRef({ ratesT1, ratesT2, flags, activeTable, hasChanges });
   useEffect(() => {
     latestRef.current = { ratesT1, ratesT2, flags, activeTable, hasChanges };
@@ -138,7 +103,6 @@ const RatesSettingsManager: React.FC = () => {
 
   useEffect(() => {
     loadDatabaseRates();
-    loadMachines();
 
     const channel = supabase
       .channel('rates-settings-realtime')
@@ -150,13 +114,6 @@ const RatesSettingsManager: React.FC = () => {
           if (!latestRef.current.hasChanges) {
             loadDatabaseRates();
           }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'machines' },
-        () => {
-          loadMachines();
         }
       )
       .subscribe();
@@ -331,87 +288,6 @@ const RatesSettingsManager: React.FC = () => {
     }
   };
 
-  // =========================================================================
-  // GESTÃO DE MAQUININHAS (CRUD SUPABASE)
-  // =========================================================================
-  const openNewMachineModal = () => {
-    setEditingMachine(null);
-    setMachineFormData({ name: '', liquidation_days: 1 });
-    setShowMachineModal(true);
-  };
-
-  const openEditMachineModal = (m: MachineItem) => {
-    setEditingMachine(m);
-    setMachineFormData({
-      name: m.name,
-      liquidation_days: m.liquidation_days || 1
-    });
-    setShowMachineModal(true);
-  };
-
-  const handleSaveMachine = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!machineFormData.name.trim()) {
-      addNotification('Informe o nome da maquininha.', 'alerta');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      if (editingMachine) {
-        // UPDATE
-        const { error } = await supabase
-          .from('machines')
-          .update({
-            name: machineFormData.name.trim(),
-            liquidation_days: Number(machineFormData.liquidation_days) || 1
-          })
-          .eq('id', editingMachine.id);
-
-        if (error) throw error;
-        addNotification(`Maquininha ${machineFormData.name} atualizada no banco!`, 'sucesso');
-      } else {
-        // INSERT
-        const { error } = await supabase
-          .from('machines')
-          .insert([{
-            name: machineFormData.name.trim(),
-            liquidation_days: Number(machineFormData.liquidation_days) || 1
-          }]);
-
-        if (error) throw error;
-        addNotification(`Maquininha ${machineFormData.name} cadastrada no banco!`, 'sucesso');
-      }
-
-      setShowMachineModal(false);
-      loadMachines();
-    } catch (err: any) {
-      addNotification('Erro ao salvar maquininha: ' + err.message, 'alerta');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeleteMachine = async (machineId: number, machineName: string) => {
-    if (window.confirm(`Tem certeza que deseja excluir a maquininha "${machineName}" do banco de dados?`)) {
-      setSaving(true);
-      try {
-        const { error } = await supabase
-          .from('machines')
-          .delete()
-          .eq('id', machineId);
-
-        if (error) throw error;
-        addNotification(`Maquininha ${machineName} removida do banco de dados.`, 'sucesso');
-        loadMachines();
-      } catch (err: any) {
-        addNotification('Erro ao excluir: ' + err.message, 'alerta');
-      } finally {
-        setSaving(false);
-      }
-    }
-  };
-
   // Simulação de teste em tempo real com as taxas ativas
   const testSimulation = useMemo(() => {
     const currentRate = currentRates[selectedFlagKey]?.[testInstallments] ?? 0;
@@ -573,29 +449,6 @@ const RatesSettingsManager: React.FC = () => {
               )}
             </>
           )}
-
-          {activeMainTab === 'machines' && isAdmin && (
-            <button
-              type="button"
-              onClick={openNewMachineModal}
-              style={{
-                padding: '0.85rem 1.5rem',
-                background: '#d97706',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '14px',
-                fontWeight: 800,
-                fontSize: '0.95rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                boxShadow: '0 8px 16px -4px rgba(0, 168, 89, 0.35)'
-              }}
-            >
-              <Plus size={18} /> Cadastrar Nova Maquininha
-            </button>
-          )}
         </div>
       </div>
 
@@ -646,7 +499,7 @@ const RatesSettingsManager: React.FC = () => {
             transition: 'all 0.2s'
           }}
         >
-          <Cpu size={18} /> Gestão de Maquininhas POS ({machines.length})
+          <Cpu size={18} /> Gestão de Maquininhas POS
         </button>
       </div>
 
@@ -938,212 +791,8 @@ const RatesSettingsManager: React.FC = () => {
 
       {/* ABA 2: GESTÃO DE MAQUININHAS POS (BANCO DE DADOS) */}
       {activeMainTab === 'machines' && (
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 900, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Cpu size={24} color="#d97706" /> Maquininhas POS Cadastradas no Banco de Dados
-              </h2>
-              <p style={{ color: '#64748b', fontSize: '0.9rem', margin: '0.3rem 0 0 0', fontWeight: 500 }}>
-                Cadastre e edite as maquininhas de cartão disponíveis para seleção no momento do lançamento da operação.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={openNewMachineModal}
-              style={{
-                padding: '0.75rem 1.25rem',
-                background: '#d97706',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '12px',
-                fontWeight: 800,
-                fontSize: '0.9rem',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                boxShadow: '0 4px 10px rgba(0,168,89,0.25)'
-              }}
-            >
-              <Plus size={16} /> Nova Maquininha
-            </button>
-          </div>
-
-          {loadingMachines ? (
-            <div style={{ padding: '4rem', textAlign: 'center', color: '#d97706', fontWeight: 800 }}>
-              CARREGANDO MAQUININHAS DO BANCO...
-            </div>
-          ) : machines.length === 0 ? (
-            <div style={{ padding: '4rem', textAlign: 'center', color: '#94a3b8', fontWeight: 600 }}>
-              Nenhuma maquininha cadastrada no banco de dados. Clique em "Nova Maquininha" para cadastrar.
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
-              {machines.map(m => (
-                <div
-                  key={m.id}
-                  style={{
-                    background: '#f8fafc',
-                    border: '1.5px solid #e2e8f0',
-                    borderRadius: '18px',
-                    padding: '1.25rem',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    gap: '1rem',
-                    transition: 'all 0.2s',
-                    boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.5rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <div style={{ background: '#e0f2fe', color: '#0284c7', padding: '0.6rem', borderRadius: '12px' }}>
-                        <Smartphone size={22} />
-                      </div>
-                      <div>
-                        <h4 style={{ margin: 0, color: '#0f172a', fontWeight: 900, fontSize: '1.05rem' }}>
-                          {m.name}
-                        </h4>
-                        <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 700 }}>
-                          ID: #{m.id}
-                        </span>
-                      </div>
-                    </div>
-
-                    <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '0.7rem', fontWeight: 800, padding: '3px 8px', borderRadius: '8px' }}>
-                      Ativa
-                    </span>
-                  </div>
-
-                  <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: '#64748b', fontSize: '0.8rem', fontWeight: 600 }}>Liquidação:</span>
-                    <strong style={{ color: '#0f172a', fontSize: '0.85rem' }}>D+{m.liquidation_days || 1} dia útil</strong>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '0.5rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => openEditMachineModal(m)}
-                      style={{
-                        flex: 1,
-                        padding: '0.6rem',
-                        background: '#ffffff',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: '10px',
-                        color: '#0f172a',
-                        fontWeight: 700,
-                        fontSize: '0.8rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.3rem'
-                      }}
-                    >
-                      <Edit2 size={13} color="#2563eb" /> Editar
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMachine(m.id, m.name)}
-                      style={{
-                        padding: '0.6rem 0.85rem',
-                        background: '#fef2f2',
-                        border: '1px solid #fee2e2',
-                        borderRadius: '10px',
-                        color: '#dc2626',
-                        fontWeight: 700,
-                        fontSize: '0.8rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '0.3rem'
-                      }}
-                    >
-                      <Trash2 size={13} /> Excluir
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* MODAL DE CADASTRO / EDIÇÃO DE MAQUININHA */}
-      {showMachineModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '1rem' }}>
-          <div style={{ background: '#ffffff', borderRadius: '24px', padding: '2rem', width: '100%', maxWidth: '480px', boxShadow: '0 20px 40px rgba(0,0,0,0.2)' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 900, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Cpu size={22} color="#d97706" /> {editingMachine ? 'Editar Maquininha' : 'Cadastrar Nova Maquininha'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowMachineModal(false)}
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b' }}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveMachine} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-                  Nome da Maquininha / Modelo
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Stone Smart POS Balcão"
-                  value={machineFormData.name}
-                  onChange={e => setMachineFormData({ ...machineFormData, name: e.target.value })}
-                  style={{ width: '100%', padding: '0.85rem 1rem', borderRadius: '12px', border: '1.5px solid #cbd5e1', outline: 'none', fontWeight: 700, color: '#0f172a', boxSizing: 'border-box' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-                  Prazo de Liquidação (Dias)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  max="30"
-                  required
-                  placeholder="1"
-                  value={machineFormData.liquidation_days}
-                  onChange={e => setMachineFormData({ ...machineFormData, liquidation_days: Number(e.target.value) })}
-                  style={{ width: '100%', padding: '0.85rem 1rem', borderRadius: '12px', border: '1.5px solid #cbd5e1', outline: 'none', fontWeight: 700, color: '#0f172a', boxSizing: 'border-box' }}
-                />
-                <span style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.3rem', display: 'block' }}>
-                  Ex: 1 = D+1 (recebe no dia útil seguinte) | 0 = D+0 (na hora)
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowMachineModal(false)}
-                  style={{ flex: 1, padding: '0.85rem', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '12px', fontWeight: 700, color: '#475569', cursor: 'pointer' }}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  style={{ flex: 1, padding: '0.85rem', background: '#d97706', border: 'none', borderRadius: '12px', fontWeight: 800, color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', boxShadow: '0 4px 12px rgba(0,168,89,0.3)' }}
-                >
-                  {saving ? 'Gravando...' : 'Salvar no Banco'}
-                </button>
-              </div>
-            </form>
-
-          </div>
+        <div style={{ marginTop: '0.5rem' }}>
+          <MachinesManager />
         </div>
       )}
 

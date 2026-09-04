@@ -74,7 +74,13 @@ const UsersManager: React.FC = () => {
   const [showPasswordText, setShowPasswordText] = useState(false);
   const [passwordSubmitting, setPasswordSubmitting] = useState(false);
 
-  const [newUser, setNewUser] = useState({
+  const [newUser, setNewUser] = useState<{
+    full_name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    permissions: UserPermissions;
+  }>({
     full_name: '',
     email: '',
     password: '',

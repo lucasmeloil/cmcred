@@ -188,6 +188,8 @@ const CreateLoan: React.FC = () => {
     };
     window.addEventListener('cmcred_rates_updated', handleRatesUpdate);
     window.addEventListener('cmcred_flags_updated', handleRatesUpdate);
+    window.addEventListener('bonuscred_rates_updated', handleRatesUpdate);
+    window.addEventListener('bonuscred_flags_updated', handleRatesUpdate);
 
     // Sincronização em tempo real via Supabase Realtime Channels
     const channel = supabase
@@ -218,6 +220,8 @@ const CreateLoan: React.FC = () => {
     return () => {
       window.removeEventListener('cmcred_rates_updated', handleRatesUpdate);
       window.removeEventListener('cmcred_flags_updated', handleRatesUpdate);
+      window.removeEventListener('bonuscred_rates_updated', handleRatesUpdate);
+      window.removeEventListener('bonuscred_flags_updated', handleRatesUpdate);
       supabase.removeChannel(channel);
     };
   }, [currentUser, rateTableType]);

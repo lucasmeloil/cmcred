@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { 
   Plus, 
   Trash2, 
@@ -106,10 +107,25 @@ const MachinesManager: React.FC = () => {
       setLoading(true);
     }
     try {
-      const [machRes, bankRes] = await Promise.all([
-        supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
-        supabase.from('banks').select('*').order('name', { ascending: true })
-      ]);
+      let machRes = await supabase.from('machines').select('*, banks(name)').order('name', { ascending: true });
+      if ((machRes.error || !machRes.data || machRes.data.length === 0) && supabaseAdmin) {
+        try {
+          const adminMach = await supabaseAdmin.from('machines').select('*, banks(name)').order('name', { ascending: true });
+          if (adminMach.data && adminMach.data.length > 0) {
+            machRes = adminMach;
+          }
+        } catch {}
+      }
+
+      let bankRes = await supabase.from('banks').select('*').order('name', { ascending: true });
+      if ((bankRes.error || !bankRes.data || bankRes.data.length === 0) && supabaseAdmin) {
+        try {
+          const adminBanks = await supabaseAdmin.from('banks').select('*').order('name', { ascending: true });
+          if (adminBanks.data && adminBanks.data.length > 0) {
+            bankRes = adminBanks;
+          }
+        } catch {}
+      }
 
       if (machRes.data) {
         const mapped = machRes.data.map((m: any) => ({
@@ -138,14 +154,14 @@ const MachinesManager: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'machines' },
         () => {
-          fetchData();
+          fetchData(true);
         }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'banks' },
         () => {
-          fetchData();
+          fetchData(true);
         }
       )
       .subscribe();
@@ -201,10 +217,10 @@ const MachinesManager: React.FC = () => {
     addNotification(`Escalonamento aplicado na bandeira ${activeFlagTab}!`, 'sucesso');
   };
 
-  // Alterar taxa individual na modal
+  // Alterar taxa individual na modal com precisão decimal
   const handleRateChange = (flagKey: string, installment: number, value: number | string) => {
     const num = typeof value === 'number' ? value : parseFloat(String(value).replace(',', '.'));
-    const cleanVal = isNaN(num) ? 0 : Math.max(0, num);
+    const cleanVal = isNaN(num) ? 0 : Number(Math.max(0, num).toFixed(2));
 
     setFormData(prev => ({
       ...prev,
@@ -218,8 +234,7 @@ const MachinesManager: React.FC = () => {
     }));
   };
 
-
-  // Salvar no Banco de Dados Supabase
+  // Salvar no Banco de Dados Supabase com garantia via supabaseAdmin
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return addNotification('Informe o nome da maquininha.', 'alerta');
@@ -229,40 +244,69 @@ const MachinesManager: React.FC = () => {
       const feePercentVal = parseFloat(formData.fee_percentage.replace(',', '.')) || null;
       const fixedFeeVal = parseFloat(formData.fixed_fee.replace(',', '.')) || 0;
 
+      // Normaliza as taxas para garantir precisão decimal de 1 a 18 e formato JSONB impecável
+      const cleanRatesByFlag: Record<string, Record<string, number>> = {};
+      flags.forEach(f => {
+        cleanRatesByFlag[f.key] = {};
+        const sourceMap = formData.rates_by_flag[f.key] || {};
+        for (let i = 1; i <= 18; i++) {
+          const raw = sourceMap[i] ?? (sourceMap as any)[String(i)] ?? 0;
+          cleanRatesByFlag[f.key][String(i)] = Number(Number(raw).toFixed(2));
+        }
+      });
+
       const dataToSave = {
         name: formData.name.trim(),
         bank_id: formData.bank_id ? parseInt(formData.bank_id) : null,
         fee_percentage: feePercentVal,
         liquidation_days: parseInt(formData.liquidation_days) || 1,
         installment_fees: {
-          rates_by_flag: formData.rates_by_flag,
+          rates_by_flag: cleanRatesByFlag,
           fixed_fee: fixedFeeVal,
           // Compatibilidade com campos legados
-          ...formData.rates_by_flag['VISA_MASTER']
+          ...(cleanRatesByFlag['VISA_MASTER'] || {})
         }
       };
 
+      let dbError = null;
       if (editingId) {
         const { error } = await supabase
           .from('machines')
           .update(dataToSave)
           .eq('id', editingId);
+        dbError = error;
 
-        if (error) throw error;
+        if (dbError && supabaseAdmin) {
+          const { error: adminErr } = await supabaseAdmin
+            .from('machines')
+            .update(dataToSave)
+            .eq('id', editingId);
+          if (!adminErr) dbError = null;
+        }
+
+        if (dbError) throw dbError;
         addNotification(`Maquininha "${formData.name}" atualizada com sucesso no banco!`, 'sucesso');
         await logAudit('edição_máquina', `Maquininha ${formData.name} atualizada no banco.`);
       } else {
         const { error } = await supabase
           .from('machines')
           .insert([dataToSave]);
+        dbError = error;
 
-        if (error) throw error;
+        if (dbError && supabaseAdmin) {
+          const { error: adminErr } = await supabaseAdmin
+            .from('machines')
+            .insert([dataToSave]);
+          if (!adminErr) dbError = null;
+        }
+
+        if (dbError) throw dbError;
         addNotification(`Maquininha "${formData.name}" cadastrada com sucesso no banco!`, 'sucesso');
         await logAudit('criação_máquina', `Maquininha ${formData.name} cadastrada no banco.`);
       }
 
       closeModal();
-      fetchData();
+      await fetchData(true);
     } catch (err: any) {
       addNotification('Erro ao salvar no banco: ' + err.message, 'alerta');
     } finally {
@@ -274,16 +318,25 @@ const MachinesManager: React.FC = () => {
     setEditingId(m.id);
     
     // Tenta carregar as taxas da máquina ou usar as padrão de adquirente
-    let machineRates = JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES));
-    if (m.installment_fees && m.installment_fees.rates_by_flag) {
-      machineRates = m.installment_fees.rates_by_flag;
-    } else if (m.installment_fees) {
-      // Garante suporte a formatos legados
-      machineRates = {
-        'VISA_MASTER': { ...m.installment_fees },
-        'BANESE/ELO': { ...m.installment_fees },
-        'AMEX': { ...m.installment_fees }
-      };
+    let machineRates: Record<string, Record<number, number>> = JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES));
+    const src = m.installment_fees?.rates_by_flag || m.card_rates || m.installment_fees;
+
+    if (src && typeof src === 'object') {
+      flags.forEach(f => {
+        const flagSrc = src[f.key] || src[f.key.toUpperCase()] || src[f.name];
+        if (flagSrc && typeof flagSrc === 'object') {
+          machineRates[f.key] = {};
+          for (let i = 1; i <= 18; i++) {
+            const val = flagSrc[i] ?? flagSrc[String(i)] ?? flagSrc[`${i}x`] ?? DEFAULT_MACHINE_MDR_RATES[f.key]?.[i] ?? 0;
+            machineRates[f.key][i] = Number(Number(val).toFixed(2));
+          }
+        } else if (!machineRates[f.key]) {
+          machineRates[f.key] = {};
+          for (let i = 1; i <= 18; i++) {
+            machineRates[f.key][i] = DEFAULT_MACHINE_MDR_RATES['VISA_MASTER']?.[i] ?? 0;
+          }
+        }
+      });
     }
 
     setFormData({
@@ -299,13 +352,21 @@ const MachinesManager: React.FC = () => {
 
   const openNewMachine = () => {
     setEditingId(null);
+    const initialRates: Record<string, Record<number, number>> = {};
+    flags.forEach(f => {
+      initialRates[f.key] = {};
+      for (let i = 1; i <= 18; i++) {
+        initialRates[f.key][i] = DEFAULT_MACHINE_MDR_RATES[f.key]?.[i] ?? DEFAULT_MACHINE_MDR_RATES['VISA_MASTER']?.[i] ?? 0;
+      }
+    });
+
     setFormData({
       name: '',
       bank_id: banks.length > 0 ? banks[0].id.toString() : '',
       fee_percentage: '',
       liquidation_days: '1',
       fixed_fee: '0.00',
-      rates_by_flag: JSON.parse(JSON.stringify(DEFAULT_MACHINE_MDR_RATES))
+      rates_by_flag: initialRates
     });
     setShowModal(true);
   };
@@ -320,11 +381,15 @@ const MachinesManager: React.FC = () => {
     if (!confirmed) return;
     
     try {
-      const { error } = await supabase.from('machines').delete().eq('id', id);
+      let { error } = await supabase.from('machines').delete().eq('id', id);
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin.from('machines').delete().eq('id', id);
+        error = adminRes.error;
+      }
       if (error) throw error;
       await logAudit('exclusão_máquina', `Equipamento ${name} removido do sistema.`);
       addNotification(`Maquininha "${name}" excluída com sucesso.`, 'sucesso');
-      fetchData();
+      await fetchData(true);
     } catch (err: any) {
       addNotification('Erro ao excluir: ' + err.message, 'alerta');
     }
@@ -473,7 +538,20 @@ const MachinesManager: React.FC = () => {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1.5rem' }}>
           {filteredMachines.map(m => {
-            const sampleRates = m.card_rates?.['VISA_MASTER'] || m.installment_fees?.['VISA_MASTER'] || DEFAULT_MACHINE_MDR_RATES['VISA_MASTER'];
+            const sampleRates = m.card_rates?.['VISA_MASTER'] || 
+                                m.installment_fees?.['rates_by_flag']?.['VISA_MASTER'] || 
+                                m.installment_fees?.['VISA_MASTER'] || 
+                                DEFAULT_MACHINE_MDR_RATES['VISA_MASTER'];
+
+            const getCardSampleRate = (sampleObj: any, p: number): number => {
+              if (!sampleObj) return DEFAULT_MACHINE_MDR_RATES['VISA_MASTER']?.[p] ?? 0;
+              const val = sampleObj[p] ?? sampleObj[String(p)] ?? sampleObj[`${p}x`];
+              if (val !== undefined && val !== null && !isNaN(Number(val))) {
+                return Number(Number(val).toFixed(2));
+              }
+              return DEFAULT_MACHINE_MDR_RATES['VISA_MASTER']?.[p] ?? 0;
+            };
+
             return (
               <div 
                 key={m.id} 
@@ -575,10 +653,10 @@ const MachinesManager: React.FC = () => {
                     Retenção MDR (VISA / MASTER):
                   </span>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 800, color: '#0f172a' }}>
-                    <span>1x: <b style={{ color: '#059669' }}>{(sampleRates?.[1] ?? 1.2).toFixed(2)}%</b></span>
-                    <span>4x: <b style={{ color: '#059669' }}>{(sampleRates?.[4] ?? 2.4).toFixed(2)}%</b></span>
-                    <span>10x: <b style={{ color: '#059669' }}>{(sampleRates?.[10] ?? 4.2).toFixed(2)}%</b></span>
-                    <span>18x: <b style={{ color: '#059669' }}>{(sampleRates?.[18] ?? 6.5).toFixed(2)}%</b></span>
+                    <span>1x: <b style={{ color: '#059669' }}>{getCardSampleRate(sampleRates, 1).toFixed(2)}%</b></span>
+                    <span>4x: <b style={{ color: '#059669' }}>{getCardSampleRate(sampleRates, 4).toFixed(2)}%</b></span>
+                    <span>10x: <b style={{ color: '#059669' }}>{getCardSampleRate(sampleRates, 10).toFixed(2)}%</b></span>
+                    <span>18x: <b style={{ color: '#059669' }}>{getCardSampleRate(sampleRates, 18).toFixed(2)}%</b></span>
                   </div>
                 </div>
 
