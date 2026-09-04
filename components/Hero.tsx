@@ -63,11 +63,11 @@ const Hero: React.FC = () => {
             <div className="absolute top-1 -right-4 sm:top-4 sm:-right-6 md:top-12 md:-right-8 bg-black-900/95 backdrop-blur-md border border-amber-500/50 p-1.5 sm:p-2 md:p-3.5 rounded-xl md:rounded-2xl shadow-[0_0_20px_rgba(212,175,55,0.3)] animate-bounce z-20" style={{ animationDuration: '4.5s' }}>
               <div className="flex items-center gap-1.5 md:gap-3">
                 <div className="bg-gradient-to-r from-amber-500 to-yellow-500 p-1 md:p-2 rounded-lg md:rounded-xl text-black-950 font-black shadow-[0_0_12px_rgba(245,158,11,0.4)]">
-                  <span className="text-[9px] md:text-sm font-orbitron">18x</span>
+                  <span className="text-[9px] md:text-sm font-orbitron">21x</span>
                 </div>
                 <div>
                   <p className="text-[8px] md:text-xs text-gray-400 uppercase tracking-wider font-semibold">Em até</p>
-                  <p className="text-white text-[10px] md:text-sm font-black font-orbitron">18x no Cartão</p>
+                  <p className="text-white text-[10px] md:text-sm font-black font-orbitron">21x no Cartão</p>
                 </div>
               </div>
             </div>
