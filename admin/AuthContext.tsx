@@ -71,7 +71,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const inFlightProfileRef = React.useRef<string | null>(null);
   const lastProfileFetchTimeRef = React.useRef<number>(0);
 
-  // Fetch profile when session changes with deduplication and in-flight guard
+  // Fetch profile when session changes with deduplication and in-flight guard (anti-loop protection v2)
   const fetchProfile = useCallback(async (userId: string, fallbackEmail?: string) => {
     if (!userId) return;
 
