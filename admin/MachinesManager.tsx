@@ -66,9 +66,21 @@ const MachinesManager: React.FC = () => {
                   currentUser?.email?.toLowerCase().includes('admin') || 
                   currentUser?.email?.toLowerCase().includes('cmcred');
   
-  const [machines, setMachines] = useState<MachineModel[]>([]);
+  const [machines, setMachines] = useState<MachineModel[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_machines');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
   const [banks, setBanks] = useState<Bank[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_machines');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -99,24 +111,30 @@ const MachinesManager: React.FC = () => {
 
   const [newBankName, setNewBankName] = useState('');
   const flags = getCustomCardFlags();
+  const hasLoadedOnceRef = React.useRef(machines.length > 0);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       const [machRes, bankRes] = await Promise.all([
         supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
         supabase.from('banks').select('*').order('name', { ascending: true })
       ]);
 
-      if (machRes.data) {
-        setMachines(machRes.data.map((m: any) => ({
+      if (machRes.data && (machRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+        const mapped = machRes.data.map((m: any) => ({
           ...m,
           bank_name: m.banks?.name || 'Banco Geral',
           installment_fees: m.installment_fees || {},
           card_rates: m.installment_fees?.rates_by_flag || (m.installment_fees ? m.installment_fees : DEFAULT_MACHINE_MDR_RATES)
-        })));
+        }));
+        setMachines(mapped);
+        try { sessionStorage.setItem('cmcred_cache_machines', JSON.stringify(mapped)); } catch {}
       }
       if (bankRes.data) setBanks(bankRes.data);
+      hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar maquininhas:', err);
     } finally {
@@ -528,10 +546,33 @@ const MachinesManager: React.FC = () => {
                 </div>
 
                 {/* Estatísticas Rápidas */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                  <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                    <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block' }}>Liquidação</span>
-                    <strong style={{ fontSize: '1rem', color: '#d97706', fontWeight: 900 }}>D+{m.liquidation_days || 1} dia útil</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.75rem' }}>
+                  <div style={{ 
+                    background: Number(m.liquidation_days) === 0 ? '#ecfdf5' : '#fffbeb', 
+                    padding: '0.75rem', 
+                    borderRadius: '14px', 
+                    border: `1px solid ${Number(m.liquidation_days) === 0 ? '#a7f3d0' : '#fde68a'}` 
+                  }}>
+                    <span style={{ 
+                      fontSize: '0.7rem', 
+                      color: Number(m.liquidation_days) === 0 ? '#047857' : '#b45309', 
+                      fontWeight: 800, 
+                      textTransform: 'uppercase', 
+                      display: 'block' 
+                    }}>
+                      Prazo de Recebimento
+                    </span>
+                    <strong style={{ 
+                      fontSize: '0.92rem', 
+                      color: Number(m.liquidation_days) === 0 ? '#059669' : '#d97706', 
+                      fontWeight: 900,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      marginTop: '0.2rem'
+                    }}>
+                      {Number(m.liquidation_days) === 0 ? '⚡ D+0 (Mesmo Dia / Na Hora)' : `📅 D+${m.liquidation_days || 1} (${m.liquidation_days === 1 ? 'Próximo dia útil' : `${m.liquidation_days} dias úteis`})`}
+                    </strong>
                   </div>
                   <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
                     <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 800, textTransform: 'uppercase', display: 'block' }}>Taxa Geral Flat</span>
@@ -571,7 +612,7 @@ const MachinesManager: React.FC = () => {
                   <Cpu size={26} color="#d97706" /> {editingId ? 'Editar Maquininha POS & Retenção' : 'Cadastrar Nova Maquininha POS'}
                 </h2>
                 <p style={{ color: '#64748b', fontSize: '0.9rem', margin: '0.2rem 0 0', fontWeight: 500 }}>
-                  Configure as taxas de retenção que a maquininha cobra da CM CRED (100% ajustáveis pelo admin).
+                  Configure o prazo de recebimento bancário (D+0, D+1, etc.) e as taxas de retenção que a adquirente desconta.
                 </p>
               </div>
 
@@ -582,7 +623,7 @@ const MachinesManager: React.FC = () => {
 
             <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
-              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '1rem' }}>
                 {/* Nome */}
                 <div>
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
@@ -591,7 +632,7 @@ const MachinesManager: React.FC = () => {
                   <input 
                     type="text"
                     required
-                    placeholder="Ex: Stone Smart Balcão"
+                    placeholder="Ex: Stone Smart Balcão, Cielo LIO, PagBank"
                     value={formData.name}
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
                     style={inputStyle}
@@ -602,7 +643,7 @@ const MachinesManager: React.FC = () => {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                     <label style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', textTransform: 'uppercase' }}>
-                      Banco / Adquirente
+                      Banco / Conta de Destino
                     </label>
                     <button 
                       type="button" 
@@ -624,23 +665,6 @@ const MachinesManager: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Prazo de Liquidação */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-                    Liquidação (Dias)
-                  </label>
-                  <input 
-                    type="number"
-                    min="0"
-                    max="30"
-                    required
-                    placeholder="1"
-                    value={formData.liquidation_days}
-                    onChange={e => setFormData({ ...formData, liquidation_days: e.target.value })}
-                    style={inputStyle}
-                  />
-                </div>
-
                 {/* Taxa Fixa por Transação (R$) */}
                 <div>
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 800, color: '#0f172a', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
@@ -653,6 +677,146 @@ const MachinesManager: React.FC = () => {
                     onChange={e => setFormData({ ...formData, fixed_fee: e.target.value })}
                     style={inputStyle}
                   />
+                </div>
+              </div>
+
+              {/* SELEÇÃO DO PRAZO DE LIQUIDAÇÃO BANCÁRIA (D+0, D+1, D+2, D+3...) */}
+              <div style={{ 
+                background: '#f8fafc', 
+                padding: '1.25rem', 
+                borderRadius: '18px', 
+                border: '1.5px solid #e2e8f0' 
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.85rem', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Calendar size={16} color="#d97706" /> Prazo de Recebimento na Conta Bancária (Dias de Liquidação)
+                    </label>
+                    <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: '#64748b' }}>
+                      Defina quando o valor líquido desta maquininha cai na conta da empresa para o sistema gerar o alerta inteligente de confirmação.
+                    </p>
+                  </div>
+                  <span style={{
+                    fontSize: '0.82rem',
+                    fontWeight: 900,
+                    padding: '4px 12px',
+                    borderRadius: '8px',
+                    background: formData.liquidation_days === '0' ? '#ecfdf5' : '#fffbeb',
+                    color: formData.liquidation_days === '0' ? '#059669' : '#d97706',
+                    border: `1px solid ${formData.liquidation_days === '0' ? '#a7f3d0' : '#fde68a'}`
+                  }}>
+                    {formData.liquidation_days === '0' ? '⚡ D+0: Entra no mesmo dia' : `📅 D+${formData.liquidation_days}: ${formData.liquidation_days === '1' ? 'Próximo dia útil' : `${formData.liquidation_days} dias úteis`}`}
+                  </span>
+                </div>
+
+                {/* Botões de Seleção Rápida */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr)) 120px', gap: '0.5rem', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, liquidation_days: '0' })}
+                    style={{
+                      padding: '0.65rem 0.8rem',
+                      borderRadius: '12px',
+                      border: formData.liquidation_days === '0' ? '2px solid #059669' : '1.5px solid #cbd5e1',
+                      background: formData.liquidation_days === '0' ? '#ecfdf5' : '#ffffff',
+                      color: formData.liquidation_days === '0' ? '#065f46' : '#334155',
+                      fontWeight: 800,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <span>⚡ 0 Dias (D+0)</span>
+                    <small style={{ fontSize: '0.68rem', fontWeight: 600, opacity: 0.8 }}>No mesmo dia / Na hora</small>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, liquidation_days: '1' })}
+                    style={{
+                      padding: '0.65rem 0.8rem',
+                      borderRadius: '12px',
+                      border: formData.liquidation_days === '1' ? '2px solid #d97706' : '1.5px solid #cbd5e1',
+                      background: formData.liquidation_days === '1' ? '#fffbeb' : '#ffffff',
+                      color: formData.liquidation_days === '1' ? '#92400e' : '#334155',
+                      fontWeight: 800,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <span>📅 1 Dia (D+1)</span>
+                    <small style={{ fontSize: '0.68rem', fontWeight: 600, opacity: 0.8 }}>Próximo dia útil (Padrão)</small>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, liquidation_days: '2' })}
+                    style={{
+                      padding: '0.65rem 0.8rem',
+                      borderRadius: '12px',
+                      border: formData.liquidation_days === '2' ? '2px solid #2563eb' : '1.5px solid #cbd5e1',
+                      background: formData.liquidation_days === '2' ? '#eff6ff' : '#ffffff',
+                      color: formData.liquidation_days === '2' ? '#1e40af' : '#334155',
+                      fontWeight: 800,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <span>📅 2 Dias (D+2)</span>
+                    <small style={{ fontSize: '0.68rem', fontWeight: 600, opacity: 0.8 }}>2 dias úteis</small>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, liquidation_days: '3' })}
+                    style={{
+                      padding: '0.65rem 0.8rem',
+                      borderRadius: '12px',
+                      border: formData.liquidation_days === '3' ? '2px solid #7c3aed' : '1.5px solid #cbd5e1',
+                      background: formData.liquidation_days === '3' ? '#f5f3ff' : '#ffffff',
+                      color: formData.liquidation_days === '3' ? '#5b21b6' : '#334155',
+                      fontWeight: 800,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                      transition: 'all 0.15s'
+                    }}
+                  >
+                    <span>📅 3 Dias (D+3)</span>
+                    <small style={{ fontSize: '0.68rem', fontWeight: 600, opacity: 0.8 }}>3 dias úteis</small>
+                  </button>
+
+                  {/* Campo Numérico Customizado */}
+                  <div>
+                    <input 
+                      type="number"
+                      min="0"
+                      max="60"
+                      required
+                      placeholder="Outro"
+                      value={formData.liquidation_days}
+                      onChange={e => setFormData({ ...formData, liquidation_days: e.target.value })}
+                      style={{ ...inputStyle, textAlign: 'center', height: '46px' }}
+                      title="Digite a quantidade personalizada de dias"
+                    />
+                  </div>
                 </div>
               </div>
 

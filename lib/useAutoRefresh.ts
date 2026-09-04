@@ -3,17 +3,18 @@ import { useEffect, useRef } from 'react';
 /**
  * Hook de Auto-Refresh Inteligente com Alta Performance
  * - Executa a cada `intervalMs` (padrão 30 segundos) apenas se a aba estiver visível.
- * - Ao retornar para a aba após inatividade (visibilitychange / focus), executa imediatamente.
- * - Evita requisições excessivas (debounce mínimo de 5 segundos).
- * - Elimina por completo a necessidade de pressionar F5.
+ * - Ao retornar para a aba após inatividade, executa suavemente em segundo plano (`isSilent = true`).
+ * - Evita requisições concorrentes ou repetidas (debounce e trava de execução).
+ * - Garante que os dados existentes nunca sumam da tela durante a revalidação.
  */
 export function useAutoRefresh(
-  refreshCallback: () => void | Promise<void>,
+  refreshCallback: (isSilent?: boolean) => void | Promise<void>,
   intervalMs: number = 30000,
   enabled: boolean = true
 ) {
   const lastRunRef = useRef<number>(Date.now());
   const callbackRef = useRef(refreshCallback);
+  const isRefreshingRef = useRef<boolean>(false);
 
   useEffect(() => {
     callbackRef.current = refreshCallback;
@@ -22,39 +23,42 @@ export function useAutoRefresh(
   useEffect(() => {
     if (!enabled) return;
 
-    const executeRefresh = () => {
-      // Previne disparos repetidos se foi chamado há menos de 5 segundos
+    const executeRefresh = async (isSilent: boolean = true) => {
+      // Previne disparos repetidos se foi chamado há menos de 6 segundos ou se já está executando
       const now = Date.now();
-      if (now - lastRunRef.current < 5000) return;
+      if (now - lastRunRef.current < 6000 || isRefreshingRef.current) return;
       lastRunRef.current = now;
+      isRefreshingRef.current = true;
 
       try {
-        callbackRef.current();
+        await callbackRef.current(isSilent);
       } catch (err) {
-        console.warn('Erro na atualização automática:', err);
+        console.warn('Erro na atualização automática em segundo plano:', err);
+      } finally {
+        isRefreshingRef.current = false;
       }
     };
 
     // 1. Timer periódico a cada N segundos (apenas se a página estiver visível)
     const intervalId = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        executeRefresh();
+        executeRefresh(true);
       }
     }, intervalMs);
 
-    // 2. Re-execução imediata ao retornar para a aba após inatividade ou foco
+    // 2. Re-execução suave ao retornar para a aba após inatividade
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // Se ficou inativo por mais de 8 segundos, atualiza na hora
-        if (Date.now() - lastRunRef.current > 8000) {
-          executeRefresh();
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        // Se ficou inativo por mais de 15 segundos, atualiza em segundo plano sem piscar a tela
+        if (Date.now() - lastRunRef.current > 15000) {
+          executeRefresh(true);
         }
       }
     };
 
     const handleWindowFocus = () => {
-      if (Date.now() - lastRunRef.current > 8000) {
-        executeRefresh();
+      if (Date.now() - lastRunRef.current > 15000) {
+        executeRefresh(true);
       }
     };
 
@@ -68,3 +72,4 @@ export function useAutoRefresh(
     };
   }, [intervalMs, enabled]);
 }
+

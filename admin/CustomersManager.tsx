@@ -26,8 +26,20 @@ import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const CustomersManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm } = useAuth();
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_customers');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_customers');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -44,22 +56,32 @@ const CustomersManager: React.FC = () => {
     status: 'active' as 'active' | 'inactive'
   });
 
-  const fetchCustomers = useCallback(async () => {
+  const hasLoadedOnceRef = React.useRef(customers.length > 0);
+
+  const fetchCustomers = useCallback(async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (data && data.length > 0) {
-        setCustomers(data);
-      } else {
+      let list = data || [];
+      if (list.length === 0) {
         const adminRes = await supabaseAdmin
           .from('customers')
           .select('*')
           .order('created_at', { ascending: false });
-        if (adminRes.data) setCustomers(adminRes.data);
+        if (adminRes.data && adminRes.data.length > 0) list = adminRes.data;
       }
+
+      if (list.length > 0 || !hasLoadedOnceRef.current) {
+        setCustomers(list);
+        try { sessionStorage.setItem('cmcred_cache_customers', JSON.stringify(list)); } catch {}
+      }
+      hasLoadedOnceRef.current = true;
     } catch (err) {
       console.error('Erro ao buscar clientes:', err);
     } finally {
@@ -77,7 +99,7 @@ const CustomersManager: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'customers' },
         () => {
-          fetchCustomers();
+          fetchCustomers(true);
         }
       )
       .subscribe();

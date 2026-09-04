@@ -8,8 +8,20 @@ import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const PeopleManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm } = useAuth();
-  const [people, setPeople] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [people, setPeople] = useState<Customer[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_people');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_people');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
@@ -29,16 +41,23 @@ const PeopleManager: React.FC = () => {
   };
   
   const [formData, setFormData] = useState<Partial<Customer>>(initialPerson);
+  const hasLoadedOnceRef = React.useRef(people.length > 0);
 
-  const fetchPeople = useCallback(async () => {
-    setLoading(true);
+  const fetchPeople = useCallback(async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (data) setPeople(data);
+      if (data && (data.length > 0 || !hasLoadedOnceRef.current)) {
+        setPeople(data);
+        try { sessionStorage.setItem('cmcred_cache_people', JSON.stringify(data)); } catch {}
+      }
+      hasLoadedOnceRef.current = true;
     } catch (err) {
       console.error('Erro ao buscar pessoas:', err);
     } finally {

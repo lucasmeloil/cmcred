@@ -57,8 +57,37 @@ const SECTION_CONFIG: Record<string, { title: string; subtitle: string }> = {
 
 const AdminApp: React.FC = () => {
   const { currentUser, isAuthenticated, sidebarOpen, isLoading, notifications, markNotificationRead, authUserEmail } = useAuth();
-  const [activeSection, setActiveSection] = useState('dashboard');
+  const [activeSection, setActiveSectionState] = useState(() => {
+    try {
+      const hash = window.location.hash.replace('#', '').toLowerCase();
+      if (hash && SECTION_CONFIG[hash]) return hash;
+      const saved = localStorage.getItem('cmcred_active_section');
+      if (saved && SECTION_CONFIG[saved]) return saved;
+    } catch {}
+    return 'dashboard';
+  });
+
+  const setActiveSection = (section: string) => {
+    setActiveSectionState(section);
+    try {
+      localStorage.setItem('cmcred_active_section', section);
+      window.location.hash = section;
+    } catch {}
+  };
+
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  // Manter sincronizado se o hash da URL mudar
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#', '').toLowerCase();
+      if (hash && SECTION_CONFIG[hash] && hash !== activeSection) {
+        setActiveSectionState(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [activeSection]);
 
   // Proteção contra inspeção e extração de código/dados via F12 / DevTools
   useDevToolsProtection(isAuthenticated);

@@ -29,17 +29,32 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Route to admin / consultant panel if URL starts with or contains admin/consultor/login/painel/acesso
+  // Route to admin / consultant panel if URL starts with or contains admin/consultor/login/painel/acesso or has active user session
+  const hasUserSession = () => {
+    try {
+      return !!localStorage.getItem('cmcred_active_user_session');
+    } catch {
+      return false;
+    }
+  };
+
+  const adminSections = [
+    '#admin', '#login', '#painel', '#consultor', '#dashboard', 
+    '#financeiro', '#solicitacoes', '#relatorios', '#pessoas', 
+    '#maquininhas', '#taxas_simulador', '#usuarios', '#logs', 
+    '#tutoriais', '#simulador', '#novo_emprestimo', '#bandeiras'
+  ];
+
+  const isExplicitHome = currentPath.includes('#site') || currentPath.includes('#home') || currentPath === '/';
+
   const isPanel = 
+    (!isExplicitHome && hasUserSession()) ||
     currentPath.startsWith('/admin') || 
     currentPath.startsWith('/consultor') || 
     currentPath.startsWith('/login') || 
     currentPath.startsWith('/painel') || 
     currentPath.startsWith('/acesso') ||
-    currentPath.includes('#admin') ||
-    currentPath.includes('#login') ||
-    currentPath.includes('#painel') ||
-    currentPath.includes('#consultor');
+    adminSections.some(sec => currentPath.includes(sec));
 
   if (isPanel) {
     return <AdminPanel />;

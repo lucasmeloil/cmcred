@@ -30,10 +30,22 @@ const tipoConfig: Record<string, { icon: React.ReactNode; color: string }> = {
 
 const LoanRequests: React.FC = () => {
   const { currentUser, authUserEmail, addNotification, logAudit, showConfirm } = useAuth();
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
+  const [loans, setLoans] = useState<LoanRequest[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_loans_list');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
   const [banks, setBanks] = useState<Bank[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_loans_list');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
   const [editingMessage, setEditingMessage] = useState('');
   
   const defaultMessages = [
@@ -50,8 +62,12 @@ const LoanRequests: React.FC = () => {
   const [endDate, setEndDate] = useState<string>('');
   const [selected, setSelected] = useState<LoanRequest | null>(null);
 
-  const fetchInitialData = useCallback(async () => {
-    setLoading(true);
+  const hasLoadedOnceRef = React.useRef(loans.length > 0);
+
+  const fetchInitialData = useCallback(async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
                            currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
@@ -78,14 +94,18 @@ const LoanRequests: React.FC = () => {
         } catch {}
       }
 
-      setLoans(rawLoans.map((l: any) => ({
-        ...l,
-        lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
-        lead_phone: l.customers?.phone || l.leads?.phone || '',
-        bank_name: l.banks?.name || 'Banco Geral',
-        machine_name: l.machines?.name || 'Stone Smart POS',
-        consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
-      })));
+      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
+        const mapped = rawLoans.map((l: any) => ({
+          ...l,
+          lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
+          lead_phone: l.customers?.phone || l.leads?.phone || '',
+          bank_name: l.banks?.name || 'Banco Geral',
+          machine_name: l.machines?.name || 'Stone Smart POS',
+          consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
+        }));
+        setLoans(mapped);
+        try { sessionStorage.setItem('cmcred_cache_loans_list', JSON.stringify(mapped)); } catch {}
+      }
 
       let rawBanks = banksRes.data || [];
       if (rawBanks.length === 0) {
@@ -104,9 +124,12 @@ const LoanRequests: React.FC = () => {
         } catch {}
       }
       setMachines(rawMachines);
+      hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar empréstimos:', err);
-      addNotification('Erro ao sincronizar empréstimos: ' + err.message, 'alerta');
+      if (!hasLoadedOnceRef.current) {
+        addNotification('Erro ao sincronizar empréstimos: ' + err.message, 'alerta');
+      }
     } finally {
       setLoading(false);
     }
@@ -122,7 +145,7 @@ const LoanRequests: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'loans' },
         () => {
-          fetchInitialData();
+          fetchInitialData(true);
         }
       )
       .subscribe();
@@ -350,7 +373,7 @@ const LoanRequests: React.FC = () => {
           l.machine_name || 'N/A',
           `${fin.installments}x`,
           `R$ ${fin.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-          `- R$ ${fin.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${fin.machineFeeRate.toFixed(1)}%)`,
+          `R$ ${fin.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
           `R$ ${fin.netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
           `R$ ${fin.companyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
           (statusConfig[l.status]?.label || l.status || 'Concluído').toUpperCase()
@@ -359,7 +382,7 @@ const LoanRequests: React.FC = () => {
 
       autoTable(doc, {
         startY: 60,
-        head: [['CONTRATO', 'DATA', 'CLIENTE', 'OPERADOR', 'MAQUININHA', 'VEZES', 'CARTÃO (BRUTO)', 'RETENÇÃO MÁQ.', 'PIX CLIENTE', 'LUCRO REAL', 'STATUS']],
+        head: [['CONTRATO', 'DATA', 'CLIENTE', 'OPERADOR', 'MAQUININHA', 'VEZES', 'CARTÃO (BRUTO)', 'LÍQUIDO MÁQ. (A RECEBER)', 'PIX CLIENTE', 'LUCRO REAL', 'STATUS']],
         body: tableData,
         theme: 'striped',
         styles: { fontSize: 8 }
@@ -453,18 +476,20 @@ const LoanRequests: React.FC = () => {
     acc.net += fin.netAmount;
     acc.operationProfit += fin.operationProfit;
     acc.machineFee += fin.machineFeeAmount;
+    acc.machineNet += fin.machineNetReceipt;
     acc.companyProfit += fin.companyNetProfit;
     if (isAdmin || l.consultant_id === currentUser?.id) {
       acc.commission += fin.commissionAmount;
     }
     return acc;
-  }, { gross: 0, net: 0, operationProfit: 0, machineFee: 0, companyProfit: 0, commission: 0 });
+  }, { gross: 0, net: 0, operationProfit: 0, machineFee: 0, machineNet: 0, companyProfit: 0, commission: 0 });
 
   const totalApproved = totals.gross;
   const totalRequested = totals.net;
   const totalPIX = totals.net;
   const totalGrossProfit = Number(totals.operationProfit.toFixed(2));
   const totalMachineFee = Number(totals.machineFee.toFixed(2));
+  const totalMachineNet = Number(totals.machineNet.toFixed(2));
   const totalCompanyProfit = Number(totals.companyProfit.toFixed(2));
   const totalCommission = Number(totals.commission.toFixed(2));
 
@@ -482,7 +507,7 @@ const LoanRequests: React.FC = () => {
         )}
       </header>
 
-      {/* Stats Cards (5 Financial KPIs para Admin / 3 a 4 KPIs para Consultores) */}
+      {/* Stats Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '1.25rem' }}>
         <div style={{ background: '#0f172a', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(15,23,42,0.08)' }}>
             <div style={{ color: '#94a3b8', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{isAdmin ? 'Passagem no Cartão (Bruto)' : 'Meu Volume no Cartão'}</div>
@@ -497,15 +522,10 @@ const LoanRequests: React.FC = () => {
 
         {isAdmin ? (
           <>
-            <div style={{ background: '#475569', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(71,85,105,0.08)' }}>
-                <div style={{ color: '#cbd5e1', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ganhos / Juros Brutos</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem', color: '#38bdf8' }}>+ R$ {totalGrossProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.25rem', fontWeight: 600 }}>Spread cobrado do cliente</div>
-            </div>
-            <div style={{ background: '#b91c1c', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(185,28,28,0.12)' }}>
-                <div style={{ color: '#fecaca', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Retenção Máquinas (MDR)</div>
-                <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem' }}>- R$ {totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                <div style={{ fontSize: '0.72rem', color: '#fca5a5', marginTop: '0.25rem', fontWeight: 600 }}>Taxas retidas pelas adquirentes</div>
+            <div style={{ background: '#047857', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 4px 12px rgba(4,120,87,0.15)' }}>
+                <div style={{ color: '#a7f3d0', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>A Receber Máquinas (Líquido)</div>
+                <div style={{ fontSize: '1.45rem', fontWeight: 900, marginTop: '0.35rem', color: '#ffffff' }}>R$ {totalMachineNet.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                <div style={{ fontSize: '0.72rem', color: '#6ee7b7', marginTop: '0.25rem', fontWeight: 600 }}>Cai na conta (taxa: -R$ {totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})</div>
             </div>
             <div style={{ background: 'linear-gradient(135deg, #d97706 0%, #059669 100%)', borderRadius: '20px', padding: '1.25rem', color: '#fff', boxShadow: '0 8px 16px rgba(0,168,89,0.2)' }}>
                 <div style={{ color: '#dcfce7', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Lucro Real CM CRED (Acumulado)</div>
@@ -561,7 +581,7 @@ const LoanRequests: React.FC = () => {
               <thead>
                 <tr style={{ background: '#f8fafc' }}>
                   {(isAdmin 
-                    ? ['Contrato', 'Cliente', 'Operador / Responsável', 'Maquininha', 'Vezes', 'Cartão (Bruto)', 'Retenção Máq.', 'Repasse PIX', 'Lucro Real', 'Status', 'Emissão', 'Ações']
+                    ? ['Contrato', 'Cliente', 'Operador / Responsável', 'Maquininha', 'Vezes', 'Cartão (Bruto)', 'Líquido Máquina (A Receber)', 'Repasse PIX', 'Lucro Real', 'Status', 'Emissão', 'Ações']
                     : ['Contrato', 'Cliente', 'Operador / Responsável', 'Maquininha', 'Vezes', 'Cartão (Bruto)', 'Repasse PIX', 'Status', 'Emissão', 'Ações']
                   ).map((h, idx) => (
                     <th key={h} style={{ 
@@ -610,9 +630,9 @@ const LoanRequests: React.FC = () => {
                         <div style={{ color: '#1e40af', fontWeight: 900, fontSize: '0.95rem' }}>R$ {fin.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
                       </td>
                       {isAdmin && (
-                        <td style={{ padding: '1.25rem 0.85rem', borderBottom: '1px solid #f1f5f9', textAlign: 'right' }}>
-                          <div style={{ color: '#dc2626', fontWeight: 800, fontSize: '0.9rem' }}>- R$ {fin.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
-                          <div style={{ fontSize: '0.7rem', color: '#991b1b', fontWeight: 600 }}>({fin.machineFeeRate.toFixed(1)}%)</div>
+                        <td style={{ padding: '1.25rem 0.85rem', borderBottom: '1px solid #f1f5f9', textAlign: 'right', background: '#f0fdf4' }}>
+                          <div style={{ color: '#047857', fontWeight: 900, fontSize: '0.95rem' }}>R$ {fin.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                          <div style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>Taxa: -R$ {fin.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({fin.machineFeeRate.toFixed(1)}%)</div>
                         </td>
                       )}
                       <td style={{ padding: '1.25rem 0.85rem', borderBottom: '1px solid #f1f5f9', textAlign: 'right' }}>
@@ -695,7 +715,7 @@ const LoanRequests: React.FC = () => {
               <button onClick={() => setSelected(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontWeight: 800 }}>FECHAR</button>
             </div>
             
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.25rem' }}>
                <div style={{ padding: '1.25rem', background: '#f8fafc', borderRadius: '16px', border: '1px solid #f1f5f9' }}>
                   <div style={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.25rem' }}>Cliente</div>
                   <div style={{ color: '#0f172a', fontWeight: 800 }}>{selected.lead_name || 'Cliente Portador'}</div>
@@ -707,6 +727,36 @@ const LoanRequests: React.FC = () => {
                   <div style={{ color: '#64748b', fontSize: '0.8rem', fontWeight: 600 }}>{selected.installments || 1}x {(selected.type || 'Cartão').toUpperCase()}</div>
                </div>
             </div>
+
+            {isAdmin && (() => {
+              const selectedFin = calculateLoanFinancials(selected);
+              return (
+                <div style={{ background: '#f8fafc', border: '1.5px solid #e2e8f0', borderRadius: '18px', padding: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <DollarSign size={14} color="#059669" /> Resumo Financeiro da Operação
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700 }}>Passagem no Cartão:</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#1e40af' }}>R$ {selectedFin.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: '#047857', fontWeight: 700 }}>Líquido Máquina (D+1/D+0):</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#047857' }}>R$ {selectedFin.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                      <div style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 600 }}>Taxa: -R$ {selectedFin.machineFeeAmount.toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700 }}>Repasse PIX:</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#d97706' }}>R$ {selectedFin.netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.7rem', color: '#d97706', fontWeight: 700 }}>Lucro Real CM CRED:</div>
+                      <div style={{ fontSize: '0.95rem', fontWeight: 900, color: '#d97706' }}>R$ {selectedFin.companyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
               <div>

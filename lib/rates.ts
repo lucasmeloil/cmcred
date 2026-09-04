@@ -708,52 +708,6 @@ export function resolveMachineFeeRate({
     }
   }
 
-  // 3. Extrair da configuração da maquininha cadastrada no banco
-  if (machine) {
-    // 3a. Tabela por bandeira e parcelamento (rates_by_flag ou card_rates)
-    const flagRates = machine.card_rates?.[flagKey] ||
-      machine.installment_fees?.rates_by_flag?.[flagKey] ||
-      machine.installment_fees?.rates_by_flag?.[cardFlag || ''] ||
-      machine.installment_fees?.[flagKey];
-
-    if (flagRates && typeof flagRates === 'object') {
-      const rateVal = flagRates[inst] ?? flagRates[String(inst)] ?? flagRates[`${inst}x`];
-      if (rateVal !== undefined && rateVal !== null && Number(rateVal) > 0) {
-        const rate = Number(rateVal);
-        return {
-          rate,
-          amount: Number((grossAmount * (rate / 100)).toFixed(2)),
-          source: 'machine_flag_tier'
-        };
-      }
-    }
-
-    // 3b. Tabela direta de parcelas na máquina (1x a 18x)
-    if (machine.installment_fees && typeof machine.installment_fees === 'object') {
-      const feeVal = machine.installment_fees[inst] ??
-        machine.installment_fees[String(inst)] ??
-        machine.installment_fees[`${inst}x`];
-      if (feeVal !== undefined && feeVal !== null && Number(feeVal) > 0) {
-        const rate = Number(feeVal);
-        return {
-          rate,
-          amount: Number((grossAmount * (rate / 100)).toFixed(2)),
-          source: 'machine_tier'
-        };
-      }
-    }
-
-    // 3c. Taxa percentual geral da máquina
-    if (machine.fee_percentage !== undefined && machine.fee_percentage !== null && Number(machine.fee_percentage) > 0) {
-      const rate = Number(machine.fee_percentage);
-      return {
-        rate,
-        amount: Number((grossAmount * (rate / 100)).toFixed(2)),
-        source: 'machine_flat'
-      };
-    }
-  }
-
   // 4. Tabela de Custo Real MDR de Maquininha POS (Stone, PagBank, Cielo, etc.)
   // Custo de MDR por parcelamento (1x a 18x) cobrado pela adquirente da máquina
   const DEFAULT_MACHINE_MDR_TIERS: Record<number, number> = {
@@ -785,25 +739,59 @@ export function resolveMachineFeeRate({
   };
 }
 
+/**
+ * Calcula a data prevista para liquidação bancária da maquininha.
+ * Se dias == 0 (D+0), cai no mesmo dia da transação.
+ * Se dias >= 1 (D+1, D+2, etc.), adiciona dias úteis pulando sábado e domingo.
+ */
+export function calculateSettlementDueDate(createdDate: string | Date, liquidationDays: number = 1): string {
+  const d = new Date(createdDate);
+  if (isNaN(d.getTime())) {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  const daysToAdd = Math.max(0, Number(liquidationDays) || 0);
+  if (daysToAdd === 0) {
+    return d.toISOString().split('T')[0];
+  }
+
+  let added = 0;
+  while (added < daysToAdd) {
+    d.setDate(d.getDate() + 1);
+    const dayOfWeek = d.getDay(); // 0 = Domingo, 6 = Sábado
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      added++;
+    }
+  }
+
+  return d.toISOString().split('T')[0];
+}
+
 export interface LoanFinancialBreakdown {
   grossAmount: number;
   netAmount: number;
   operationProfit: number;
   machineFeeRate: number;
   machineFeeAmount: number;
+  machineNetReceipt: number; // Valor líquido que a adquirente vai depositar para a CM CRED (grossAmount - machineFeeAmount)
   commissionRate: number;
   commissionAmount: number;
   companyNetProfit: number;
   installments: number;
   interestRate: number;
   cardBrand: string;
+  settlementStatus: string;
+  settlementDueDate: string;
+  isSettled: boolean;
+  settledAt: string | null;
+  liquidationDays: number;
 }
 
 export function calculateLoanFinancials(loan: any): LoanFinancialBreakdown {
-  const grossAmount = Number(loan.approved_amount) || Number(loan.gross_amount) || (Number(loan.requested_amount) + Number(loan.profit)) || 0;
-  const netAmount = Number(loan.requested_amount) || 0;
+  const grossAmount = Number(loan.grossAmount) || Number(loan.approved_amount) || Number(loan.gross_amount) || (Number(loan.requested_amount) + Number(loan.profit)) || 0;
+  const netAmount = Number(loan.netAmount) || Number(loan.requested_amount) || 0;
   const installments = Math.min(18, Math.max(1, Number(loan.installments) || 1));
-  const interestRate = Number(loan.interest_rate) || 0;
+  const interestRate = Number(loan.interestRate) || Number(loan.interest_rate) || 0;
 
   // Bandeira
   let cardBrand = 'VISA / MASTER';
@@ -812,7 +800,7 @@ export function calculateLoanFinancials(loan: any): LoanFinancialBreakdown {
     if (flagMatch && flagMatch[1]) cardBrand = flagMatch[1].trim();
   }
   if (!cardBrand || cardBrand === 'N/A' || cardBrand === 'Cartão de Crédito') {
-    cardBrand = (loan.type && loan.type !== 'cartão') ? loan.type.toUpperCase() : 'VISA / MASTER';
+    cardBrand = (loan.type && loan.type !== 'cartão') ? loan.type.toUpperCase() : (loan.cardBrand || 'VISA / MASTER');
   }
 
   // Retenção Maquininha
@@ -821,18 +809,28 @@ export function calculateLoanFinancials(loan: any): LoanFinancialBreakdown {
     cardFlag: cardBrand,
     installments,
     observations: loan.observations,
-    explicitRate: loan.machine_fee_percentage,
-    explicitAmount: loan.machine_fee_amount,
+    explicitRate: loan.machineFeeRate || loan.machine_fee_percentage,
+    explicitAmount: loan.machineFeeAmount || loan.machine_fee_amount,
     grossAmount
   });
 
+  const machineNetReceipt = typeof loan.machineNetReceipt === 'number' ? loan.machineNetReceipt : Number(Math.max(0, grossAmount - machRes.amount).toFixed(2));
   const operationProfit = Number((grossAmount - netAmount).toFixed(2));
-  const commissionAmount = Number(loan.consultant_commission_amount) || 0;
+  const commissionAmount = Number(loan.consultant_commission_amount || loan.commission) || 0;
   const commissionRate = operationProfit > 0 ? Number(((commissionAmount / operationProfit) * 100).toFixed(2)) : 0;
 
   // Lucro Real da CM CRED que SOBRA na empresa:
   // Juros Brutos - Retenção da Maquininha - Comissão do Operador
-  const companyNetProfit = Number(Math.max(0, operationProfit - machRes.amount - commissionAmount).toFixed(2));
+  const companyNetProfit = typeof loan.companyNetProfit === 'number' ? loan.companyNetProfit : Number(Math.max(0, operationProfit - machRes.amount - commissionAmount).toFixed(2));
+
+  // Prazo e status de liquidação
+  const liquidationDays = loan.machines?.liquidation_days !== undefined 
+    ? Number(loan.machines.liquidation_days) 
+    : (loan.liquidation_days !== undefined ? Number(loan.liquidation_days) : 1);
+  const settlementStatus = loan.settlement_status || loan.settlementStatus || (liquidationDays === 0 ? 'settled' : 'pending');
+  const isSettled = settlementStatus === 'settled';
+  const settledAt = loan.settled_at || loan.settledAt || null;
+  const settlementDueDate = loan.settlement_due_date || loan.settlementDueDate || (loan.created_at ? calculateSettlementDueDate(loan.created_at, liquidationDays) : new Date().toISOString().split('T')[0]);
 
   return {
     grossAmount,
@@ -840,12 +838,126 @@ export function calculateLoanFinancials(loan: any): LoanFinancialBreakdown {
     operationProfit,
     machineFeeRate: machRes.rate,
     machineFeeAmount: machRes.amount,
+    machineNetReceipt,
     commissionRate,
     commissionAmount,
     companyNetProfit,
     installments,
     interestRate,
-    cardBrand
+    cardBrand,
+    settlementStatus,
+    settlementDueDate,
+    isSettled,
+    settledAt,
+    liquidationDays
   };
 }
+
+export interface MachineSettlementSummary {
+  machineName: string;
+  count: number;
+  totalGross: number;
+  totalFee: number;
+  totalNetReceipt: number; // Líquido a receber na conta bancária (D+1 ou D+0)
+  totalCompanyNetProfit: number;
+}
+
+export function groupLoansByMachine(loansList: any[]): MachineSettlementSummary[] {
+  const map = new Map<string, MachineSettlementSummary>();
+
+  for (const item of loansList) {
+    const isAlreadyCalculated = typeof item.machineNetReceipt === 'number' && typeof item.grossAmount === 'number';
+    const fin = isAlreadyCalculated ? item : calculateLoanFinancials(item);
+    const mName = item.machines?.name || item.machineName || item.machine_name || 'Outras Maquininhas';
+    
+    const existing = map.get(mName) || {
+      machineName: mName,
+      count: 0,
+      totalGross: 0,
+      totalFee: 0,
+      totalNetReceipt: 0,
+      totalCompanyNetProfit: 0
+    };
+
+    existing.count += 1;
+    existing.totalGross += Number(fin.grossAmount || 0);
+    existing.totalFee += Number(fin.machineFeeAmount || 0);
+    existing.totalNetReceipt += Number(fin.machineNetReceipt || 0);
+    existing.totalCompanyNetProfit += Number(fin.companyNetProfit || 0);
+
+    map.set(mName, existing);
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.totalNetReceipt - a.totalNetReceipt);
+}
+
+export interface MachineSettlementBatch {
+  machineId: string;
+  machineName: string;
+  dueDate: string;
+  isReadyToday: boolean; // dueDate <= today
+  isOverdue: boolean; // dueDate < today
+  loanIds: string[];
+  loansCount: number;
+  totalGross: number;
+  totalMachineFee: number;
+  totalNetReceipt: number; // Valor que vai cair na conta
+  totalCompanyProfit: number;
+  liquidationDays: number;
+}
+
+export function getPendingSettlementBatches(loansList: any[]): MachineSettlementBatch[] {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const batchesMap = new Map<string, MachineSettlementBatch>();
+
+  for (const item of loansList) {
+    // Apenas empréstimos aprovados/pagos/concluídos que ainda NÃO foram liquidados
+    const status = String(item.status || '').toLowerCase();
+    if (status === 'rejected' || status === 'cancelled') continue;
+
+    const fin = calculateLoanFinancials(item);
+    if (fin.isSettled) continue;
+
+    const mId = item.machine_id || item.machineId || 'unknown';
+    const mName = item.machines?.name || item.machineName || item.machine_name || 'Maquininha';
+    const dueDate = fin.settlementDueDate || todayStr;
+    const batchKey = `${mId}_${dueDate}`;
+
+    const isReadyToday = dueDate <= todayStr;
+    const isOverdue = dueDate < todayStr;
+
+    const existing = batchesMap.get(batchKey) || {
+      machineId: mId,
+      machineName: mName,
+      dueDate,
+      isReadyToday,
+      isOverdue,
+      loanIds: [],
+      loansCount: 0,
+      totalGross: 0,
+      totalMachineFee: 0,
+      totalNetReceipt: 0,
+      totalCompanyProfit: 0,
+      liquidationDays: fin.liquidationDays
+    };
+
+    if (item.id) existing.loanIds.push(item.id);
+    existing.loansCount += 1;
+    existing.totalGross += Number(fin.grossAmount || 0);
+    existing.totalMachineFee += Number(fin.machineFeeAmount || 0);
+    existing.totalNetReceipt += Number(fin.machineNetReceipt || 0);
+    existing.totalCompanyProfit += Number(fin.companyNetProfit || 0);
+
+    batchesMap.set(batchKey, existing);
+  }
+
+  return Array.from(batchesMap.values()).sort((a, b) => {
+    // Batches prontos hoje ou vencidos vêm primeiro
+    if (a.isReadyToday && !b.isReadyToday) return -1;
+    if (!a.isReadyToday && b.isReadyToday) return 1;
+    return a.dueDate.localeCompare(b.dueDate);
+  });
+}
+
+
 

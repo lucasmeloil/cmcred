@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -112,30 +112,49 @@ const Dashboard: React.FC = () => {
                   currentUser?.perfil === 'admin';
   const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
 
-  const [stats, setStats] = useState({
-    totalPIX: 0,
-    totalProfit: 0,
-    totalGrossProfit: 0,
-    totalApproved: 0,
-    totalCommission: 0,
-    totalMachineFees: 0,
-    averageTicket: 0,
-    activeOperations: 0,
-    availableCash: 0,
-    pendingReceivables: 0,
-    conversionRate: 0,
-    averageInterestRate: 0,
-    pendingOperationsCount: 0,
-    bankStats: [] as { name: string; value: number }[],
-    machineStats: [] as { name: string; value: number }[],
-    installmentStats: [] as { name: string; value: number }[],
-    consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
-    evolutionStats: [] as { date: string; volume: number; lucro: number }[],
-    monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
+  const [stats, setStats] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_dashboard_stats');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return {
+      totalPIX: 0,
+      totalProfit: 0,
+      totalGrossProfit: 0,
+      totalApproved: 0,
+      totalCommission: 0,
+      totalMachineFees: 0,
+      averageTicket: 0,
+      activeOperations: 0,
+      availableCash: 0,
+      pendingReceivables: 0,
+      conversionRate: 0,
+      averageInterestRate: 0,
+      pendingOperationsCount: 0,
+      bankStats: [] as { name: string; value: number }[],
+      machineStats: [] as { name: string; value: number }[],
+      installmentStats: [] as { name: string; value: number }[],
+      consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
+      evolutionStats: [] as { date: string; volume: number; lucro: number }[],
+      monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
+    };
   });
-  const [recentLoans, setRecentLoans] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [recentLoans, setRecentLoans] = useState<any[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_dashboard_loans');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_dashboard_stats');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
   const [activeTab, setActiveTab] = useState<'vendas' | 'operacoes'>('vendas');
+  const hasLoadedOnceRef = useRef(recentLoans.length > 0);
 
   const myOperations = useMemo(() => {
     return recentLoans.filter(l => {
@@ -147,8 +166,10 @@ const Dashboard: React.FC = () => {
     });
   }, [recentLoans, currentUser]);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
@@ -173,11 +194,18 @@ const Dashboard: React.FC = () => {
         } catch {}
       }
 
-      setRecentLoans(loans.map((l: any) => ({
+      // Previne sobrescrita acidental com array vazio ao voltar de aba
+      if (loans.length === 0 && recentLoans.length > 0 && hasLoadedOnceRef.current) {
+        return;
+      }
+
+      const mappedRecent = loans.map((l: any) => ({
         ...l,
         clienteNome: l.leads?.name || l.customers?.name || 'Cliente Portador',
         consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
-      })));
+      }));
+      setRecentLoans(mappedRecent);
+      try { sessionStorage.setItem('cmcred_cache_dashboard_loans', JSON.stringify(mappedRecent)); } catch {}
 
       let totalPIX = 0;
       let totalApproved = 0;
@@ -335,7 +363,7 @@ const Dashboard: React.FC = () => {
       });
       const myAverageTicket = myOperationsCount > 0 ? (myPIX / myOperationsCount) : 0;
 
-      setStats({
+      const computedStats = {
         totalPIX,
         totalProfit,
         totalGrossProfit,
@@ -355,7 +383,10 @@ const Dashboard: React.FC = () => {
         consultantStats,
         evolutionStats,
         monthlyStats: last12Months
-      });
+      };
+      setStats(computedStats);
+      try { sessionStorage.setItem('cmcred_cache_dashboard_stats', JSON.stringify(computedStats)); } catch {}
+      hasLoadedOnceRef.current = true;
     } catch (error) {
       console.error('Erro ao processar dados estratégicos:', error);
     } finally {
@@ -378,7 +409,7 @@ const Dashboard: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'loans' },
         () => {
-          fetchData();
+          fetchData(true);
         }
       )
       .subscribe();

@@ -4,6 +4,7 @@ import {
   PieChart, Pie, Cell, AreaChart, Area
 } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
@@ -33,6 +34,7 @@ import { useAuth } from './AuthContext';
 import type { FinanceEntry, LoanRequest } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
 import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
 
 const Financeiro: React.FC = () => {
   const { addNotification, logAudit, currentUser, authUserEmail } = useAuth();
@@ -42,9 +44,28 @@ const Financeiro: React.FC = () => {
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 
-  const [data, setData] = useState<FinanceEntry[]>([]);
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<FinanceEntry[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_finance_data');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [loans, setLoans] = useState<LoanRequest[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_finance_loans');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cachedData = sessionStorage.getItem('cmcred_cache_finance_data');
+      const cachedLoans = sessionStorage.getItem('cmcred_cache_finance_loans');
+      if (cachedData || cachedLoans) return false;
+    } catch {}
+    return true;
+  });
   const [syncing, setSyncing] = useState(false);
   
   // Modais de cadastro manual
@@ -72,32 +93,36 @@ const Financeiro: React.FC = () => {
   const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [historyOriginFilter, setHistoryOriginFilter] = useState<'all' | 'loan' | 'manual'>('all');
 
-  // Buscar dados integrados do Supabase
-  const fetchData = useCallback(async () => {
+  const hasLoadedOnceRef = React.useRef(data.length > 0 || loans.length > 0);
+
+  // Buscar dados integrados do Supabase com proteção de persistência total
+  const fetchData = useCallback(async (isSilent = false) => {
     try {
-      setLoading(true);
+      if (!hasLoadedOnceRef.current && !isSilent) {
+        setLoading(true);
+      }
       
       let financeQuery = supabase.from('finance').select('*').order('due_date', { ascending: false });
       // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
-      let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees)').order('created_at', { ascending: false });
+      let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
 
       const now = new Date();
       if (dateRange === 'day') {
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        financeQuery = financeQuery.gte('due_date', startOfDay);
-        loansQuery = loansQuery.gte('created_at', startOfDay);
+        const todayStr = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().split('T')[0];
+        financeQuery = financeQuery.gte('due_date', todayStr);
+        loansQuery = loansQuery.gte('created_at', todayStr);
       } else if (dateRange === 'week') {
-        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-        financeQuery = financeQuery.gte('due_date', weekAgo);
-        loansQuery = loansQuery.gte('created_at', weekAgo);
+        const weekAgoStr = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        financeQuery = financeQuery.gte('due_date', weekAgoStr);
+        loansQuery = loansQuery.gte('created_at', weekAgoStr);
       } else if (dateRange === 'month') {
-        const monthAgo = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-        financeQuery = financeQuery.gte('due_date', monthAgo);
-        loansQuery = loansQuery.gte('created_at', monthAgo);
+        const monthAgoStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+        financeQuery = financeQuery.gte('due_date', monthAgoStr);
+        loansQuery = loansQuery.gte('created_at', monthAgoStr);
       } else if (dateRange === 'year') {
-        const startOfYear = new Date(now.getFullYear(), 0, 1).toISOString();
-        financeQuery = financeQuery.gte('due_date', startOfYear);
-        loansQuery = loansQuery.gte('created_at', startOfYear);
+        const startOfYearStr = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
+        financeQuery = financeQuery.gte('due_date', startOfYearStr);
+        loansQuery = loansQuery.gte('created_at', startOfYearStr);
       } else if (dateRange === 'custom' && customRange.start && customRange.end) {
         financeQuery = financeQuery.gte('due_date', customRange.start).lte('due_date', customRange.end);
         loansQuery = loansQuery.gte('created_at', customRange.start).lte('created_at', customRange.end);
@@ -105,19 +130,58 @@ const Financeiro: React.FC = () => {
 
       const [financeRes, loansRes] = await Promise.all([financeQuery, loansQuery]);
 
-      if (financeRes.error) throw financeRes.error;
-      if (loansRes.error) throw loansRes.error;
+      let rawFinance = financeRes.data || [];
+      let rawLoans = loansRes.data || [];
 
-      setData(financeRes.data || []);
-      setLoans((loansRes.data || []).map((l: any) => ({
-        ...l,
-        lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
-        bank_name: l.banks?.name,
-        machine_name: l.machines?.name
-      })));
+      // Fallback resiliente com supabaseAdmin para evitar RLS/token latency ao voltar de aba
+      if ((rawLoans.length === 0 || rawFinance.length === 0) && (isSuperAdmin || !currentUser?.id)) {
+        try {
+          if (rawLoans.length === 0) {
+            let adminLoansQuery = supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
+            if (dateRange === 'month') {
+              const monthAgoStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+              adminLoansQuery = adminLoansQuery.gte('created_at', monthAgoStr);
+            }
+            const fallbackLoansRes = await adminLoansQuery;
+            if (fallbackLoansRes.data && fallbackLoansRes.data.length > 0) {
+              rawLoans = fallbackLoansRes.data;
+            }
+          }
+          if (rawFinance.length === 0) {
+            let adminFinanceQuery = supabaseAdmin.from('finance').select('*').order('due_date', { ascending: false });
+            if (dateRange === 'month') {
+              const monthAgoStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+              adminFinanceQuery = adminFinanceQuery.gte('due_date', monthAgoStr);
+            }
+            const fallbackFinanceRes = await adminFinanceQuery;
+            if (fallbackFinanceRes.data && fallbackFinanceRes.data.length > 0) {
+              rawFinance = fallbackFinanceRes.data;
+            }
+          }
+        } catch {}
+      }
+
+      // REGRA DE OURO: Nunca apague dados válidos existentes na tela durante atualização de background
+      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
+        setData(rawFinance);
+        try { sessionStorage.setItem('cmcred_cache_finance_data', JSON.stringify(rawFinance)); } catch {}
+      }
+      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
+        const mappedLoans = rawLoans.map((l: any) => ({
+          ...l,
+          lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
+          bank_name: l.banks?.name,
+          machine_name: l.machines?.name
+        }));
+        setLoans(mappedLoans);
+        try { sessionStorage.setItem('cmcred_cache_finance_loans', JSON.stringify(mappedLoans)); } catch {}
+      }
+      hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar dados financeiros:', err);
-      addNotification('Erro ao carregar dados financeiros: ' + err.message, 'alerta');
+      if (!hasLoadedOnceRef.current) {
+        addNotification('Erro ao carregar dados financeiros: ' + err.message, 'alerta');
+      }
     } finally {
       setLoading(false);
     }
@@ -127,7 +191,7 @@ const Financeiro: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
-  // Atualização automática a cada 30 segundos e ao alternar de aba (sem F5)
+  // Atualização automática a cada 30 segundos e ao alternar de aba (sem F5 e sem piscar a tela)
   useAutoRefresh(fetchData, 30000);
 
   // Sincronizar empréstimos com a tabela financeira
@@ -157,15 +221,15 @@ const Financeiro: React.FC = () => {
             machine_id: loan.machine_id || null
           });
 
-          // 2. Recebível / Entrada Cartão (Conta a Receber)
+          // 2. Recebível / Entrada Cartão (Conta a Receber Líquido no Banco)
           entriesToInsert.push({
             loan_id: loan.id,
             description: `Entrada Operação Cartão (${fin.installments}x) [${fin.cardBrand}]: ${clientName}`,
-            amount: fin.grossAmount,
+            amount: fin.machineNetReceipt,
             gross_amount: fin.grossAmount,
-            due_date: loanDate,
+            due_date: fin.settlementDueDate || loanDate,
             type: 'receivable',
-            status: loan.status === 'completed' ? 'paid' : 'pending',
+            status: fin.isSettled ? 'paid' : 'pending',
             category: 'Venda Cartão de Crédito',
             machine_id: loan.machine_id || null
           });
@@ -282,10 +346,11 @@ const Financeiro: React.FC = () => {
     let totalBrutoCartao = 0;
     let totalLucroOperacoes = 0;
     let totalRetencaoMaquinas = 0;
+    let totalLiquidoMaquinas = 0;
     let totalContratos = loans.length;
 
     const modalidadeStats: Record<string, { count: number; volumePix: number; volumeBruto: number; lucro: number }> = {};
-    const machineStats: Record<string, { name: string; count: number; volumeBruto: number; retencao: number; lucro: number }> = {};
+    const machineStats: Record<string, { name: string; count: number; volumeBruto: number; retencao: number; liquidoReceber: number; lucro: number }> = {};
     const installmentStats: Record<string, { count: number; volumeBruto: number }> = {
       '1x a 6x': { count: 0, volumeBruto: 0 },
       '7x a 12x': { count: 0, volumeBruto: 0 },
@@ -299,6 +364,7 @@ const Financeiro: React.FC = () => {
       totalBrutoCartao += fin.grossAmount;
       totalLucroOperacoes += fin.companyNetProfit;
       totalRetencaoMaquinas += fin.machineFeeAmount;
+      totalLiquidoMaquinas += fin.machineNetReceipt;
 
       // Modalidade
       const mod = (l.type || 'Cartão').toUpperCase();
@@ -310,10 +376,11 @@ const Financeiro: React.FC = () => {
 
       // Maquininha
       const mName = l.machine_name || 'Direto / Sem Maquininha';
-      if (!machineStats[mName]) machineStats[mName] = { name: mName, count: 0, volumeBruto: 0, retencao: 0, lucro: 0 };
+      if (!machineStats[mName]) machineStats[mName] = { name: mName, count: 0, volumeBruto: 0, retencao: 0, liquidoReceber: 0, lucro: 0 };
       machineStats[mName].count += 1;
       machineStats[mName].volumeBruto += fin.grossAmount;
       machineStats[mName].retencao += fin.machineFeeAmount;
+      machineStats[mName].liquidoReceber += fin.machineNetReceipt;
       machineStats[mName].lucro += fin.companyNetProfit;
 
       // Parcelamento
@@ -372,6 +439,7 @@ const Financeiro: React.FC = () => {
       totalBrutoCartao: Number(totalBrutoCartao.toFixed(2)),
       totalLucroOperacoes: Number(totalLucroOperacoes.toFixed(2)),
       totalRetencaoMaquinas: Number(totalRetencaoMaquinas.toFixed(2)),
+      totalLiquidoMaquinas: Number(totalLiquidoMaquinas.toFixed(2)),
       totalContratos,
       ticketMedio: Number(ticketMedio.toFixed(2)),
       margemMediaLucro: Number(margemMediaLucro.toFixed(2)),
@@ -458,7 +526,7 @@ const Financeiro: React.FC = () => {
         [
           `Volume Concedido (PIX):\nR$ ${stats.totalPixRepassado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
           `Faturamento Bruto Cartão:\nR$ ${stats.totalBrutoCartao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-          `Retenção Maquininhas (MDR):\nR$ ${stats.totalRetencaoMaquinas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+          `A Receber Líquido Máquinas:\nR$ ${stats.totalLiquidoMaquinas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
         ],
         [
           `Lucro Líquido Real CM CRED:\nR$ ${stats.saldoLucroReal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
@@ -653,9 +721,12 @@ const Financeiro: React.FC = () => {
             <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>Até:</label>
             <input type="date" value={customRange.end} onChange={e => setCustomRange({ ...customRange, end: e.target.value })} style={{ padding: '0.5rem', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none', fontWeight: 700 }} />
           </div>
-          <button onClick={fetchData} style={{ background: '#d97706', color: '#fff', border: 'none', padding: '0.5rem 1.2rem', borderRadius: '8px', fontWeight: 800, cursor: 'pointer' }}>Filtrar</button>
+          <button onClick={() => fetchData()} style={{ background: '#d97706', color: '#fff', border: 'none', padding: '0.5rem 1.2rem', borderRadius: '8px', fontWeight: 800, cursor: 'pointer' }}>Filtrar</button>
         </div>
       )}
+
+      {/* BANNER INTELIGENTE DE CONFIRMAÇÃO DE LIQUIDAÇÃO DE MÁQUINAS (OPÇÃO 2: 1 CLIQUE) */}
+      <MachineSettlementAlertBanner loans={loans} onSettlementSuccess={() => fetchData()} />
 
       {/* ========================================================================= */}
       {/* ABAS DE NAVEGAÇÃO & AÇÕES RÁPIDAS (EXPORTAR PDF, RECEITA, DESPESA, SYNC) */}
@@ -860,17 +931,17 @@ const Financeiro: React.FC = () => {
               </div>
             </div>
 
-            {/* Retenção Maquininhas (MDR) */}
-            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '6px solid #dc2626', borderRadius: '20px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-              <div style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>Retenção Maquininhas (MDR)</span>
-                <TrendingDown size={18} color="#dc2626" />
+            {/* A Receber das Maquininhas (Líquido) */}
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '6px solid #059669', borderRadius: '20px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
+              <div style={{ color: '#047857', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>A Receber das Máquinas (Líquido)</span>
+                <CheckCircle2 size={18} color="#059669" />
               </div>
-              <div style={{ color: '#dc2626', fontSize: '2.1rem', fontWeight: 900 }}>
-                - R$ {stats.totalRetencaoMaquinas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <div style={{ color: '#059669', fontSize: '2.1rem', fontWeight: 900 }}>
+                R$ {stats.totalLiquidoMaquinas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
               <div style={{ color: '#64748b', fontSize: '0.78rem', marginTop: '0.4rem', fontWeight: 600 }}>
-                Custo de adquirentes
+                Já abatida taxa de -R$ {stats.totalRetencaoMaquinas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
             </div>
 
@@ -1103,7 +1174,7 @@ const Financeiro: React.FC = () => {
                     <th style={{ padding: '1rem', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', textAlign: 'center' }}>Parc.</th>
                     <th style={{ padding: '1rem', color: '#0284c7', fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase' }}>Valor PIX (Repasse)</th>
                     <th style={{ padding: '1rem', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Bruto Cartão</th>
-                    <th style={{ padding: '1rem', color: '#dc2626', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Retenção Máq.</th>
+                    <th style={{ padding: '1rem', color: '#047857', fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase' }}>A Receber Máq. (Líquido)</th>
                     <th style={{ padding: '1rem', color: '#d97706', fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase' }}>Lucro CM CRED</th>
                     <th style={{ padding: '1rem', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', textAlign: 'center' }}>Status</th>
                   </tr>
@@ -1144,8 +1215,9 @@ const Financeiro: React.FC = () => {
                           <td style={{ padding: '1rem', color: '#334155', fontWeight: 700 }}>
                             R$ {fin.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </td>
-                          <td style={{ padding: '1rem', color: '#dc2626', fontWeight: 700 }}>
-                            - R$ {fin.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          <td style={{ padding: '1rem', color: '#047857', fontWeight: 900, background: '#f0fdf4' }}>
+                            R$ {fin.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            <div style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>Taxa: -R$ {fin.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
                           </td>
                           <td style={{ padding: '1rem', color: '#d97706', fontWeight: 900, fontSize: '1rem' }}>
                             R$ {fin.companyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

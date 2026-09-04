@@ -61,14 +61,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resolve: null
   });
 
+  const isExplicitLogoutRef = React.useRef(false);
+
   // Auto logout por inatividade (30 minutos) para proteção de dados financeiros sensíveis
   const handleInactivityLogout = useCallback(() => {
     if (currentUser) {
       console.warn('Sessão encerrada por inatividade de 30 minutos (Proteção Financeira CM CRED).');
+      isExplicitLogoutRef.current = true;
       supabase.auth.signOut();
       setCurrentUser(null);
       setSession(null);
       try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
+      isExplicitLogoutRef.current = false;
     }
   }, [currentUser]);
 
@@ -188,16 +192,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       if (!isMounted) return;
-      setSession(session);
-      if (session?.user?.id) {
-        await fetchProfile(session.user.id, session.user.email);
-      } else {
-        // Apenas desloga se não for evento transiente
-        if (_event === 'SIGNED_OUT') {
+
+      if (newSession?.user?.id) {
+        setSession(newSession);
+        await fetchProfile(newSession.user.id, newSession.user.email);
+      } else if (_event === 'SIGNED_OUT') {
+        // Apenas limpa a sessão se o logout foi explicitamente solicitado pelo usuário
+        if (isExplicitLogoutRef.current) {
+          setSession(null);
           setCurrentUser(null);
           try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
+        } else {
+          // Evento transiente de sincronização/troca de abas do navegador: tenta recuperar a sessão ativa
+          try {
+            const { data: currentSess } = await supabase.auth.getSession();
+            if (currentSess?.session?.user) {
+              setSession(currentSess.session);
+              await fetchProfile(currentSess.session.user.id, currentSess.session.user.email);
+            }
+          } catch (e) {
+            console.warn('Recuperação de sessão transiente:', e);
+          }
         }
       }
       setIsLoading(false);
@@ -255,12 +272,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fetchProfile]);
 
   const logout = useCallback(async () => {
+    isExplicitLogoutRef.current = true;
     try {
       await supabase.auth.signOut();
     } catch {}
     setCurrentUser(null);
     setSession(null);
     try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
+    isExplicitLogoutRef.current = false;
   }, []);
 
   const toggleSidebar = useCallback(() => {

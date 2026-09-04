@@ -33,6 +33,7 @@ import {
   getCustomCardFlags,
   fetchRatesFromDatabase,
   resolveMachineFeeRate,
+  calculateSettlementDueDate,
   type CardFlagOption,
   type RateTableType,
   TABLE_OPTIONS
@@ -95,7 +96,7 @@ const CreateLoan: React.FC = () => {
       const [leadsRes, customersRes, machinesRes, profilesRes] = await Promise.all([
         supabase.from('leads').select('*').order('name'),
         supabase.from('customers').select('*').order('name'),
-        supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id').order('name'),
+        supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name'),
         supabase.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name')
       ]);
 
@@ -311,6 +312,11 @@ const CreateLoan: React.FC = () => {
       }
 
       const machineLabel = formData.machine_name || 'Maquininha Padrão';
+      const selectedMach = machines.find(m => m.id.toString() === formData.machine_id);
+      const liquidationDays = selectedMach?.liquidation_days !== undefined ? Number(selectedMach.liquidation_days) : 1;
+      const isSettledImmediate = liquidationDays === 0;
+      const settlementDueDate = calculateSettlementDueDate(new Date(), liquidationDays);
+      const machineNetBank = Number((safeGrossAmount - machineFeeAmount).toFixed(2));
 
       const insertLoan = {
         lead_id: selectionType === 'lead' ? formData.lead_id : null,
@@ -325,11 +331,15 @@ const CreateLoan: React.FC = () => {
         consultant_id: formData.consultant_id || (isConsultant ? currentUser?.id : null),
         machine_fee_percentage: machFeePercent,
         machine_fee_amount: machineFeeAmount,
-        net_bank_amount: Number((safeGrossAmount - machineFeeAmount).toFixed(2)),
-        observations: `${formData.observations ? formData.observations + ' | ' : ''}Maquininha: ${machineLabel} (Retenção ${machFeePercent.toFixed(2)}% = R$ ${machineFeeAmount.toFixed(2)}) | Bandeira: ${formData.card_flag_id} | Canal: ${formData.channel} | PIX: ${formData.pix_key || 'Não informado'} | Final Cartão: ${formData.card_last_digits || 'N/A'}`,
+        net_bank_amount: machineNetBank,
+        observations: `${formData.observations ? formData.observations + ' | ' : ''}Maquininha: ${machineLabel} (Retenção ${machFeePercent.toFixed(2)}% = R$ ${machineFeeAmount.toFixed(2)}) | Prazo: D+${liquidationDays} | Bandeira: ${formData.card_flag_id} | Canal: ${formData.channel} | PIX: ${formData.pix_key || 'Não informado'} | Final Cartão: ${formData.card_last_digits || 'N/A'}`,
         profit: operationProfit,
         consultant_commission_amount: consultantCommission,
         company_net_profit: companyNetProfit,
+        settlement_status: isSettledImmediate ? 'settled' : 'pending',
+        settlement_due_date: settlementDueDate,
+        settled_at: isSettledImmediate ? new Date().toISOString() : null,
+        settled_by: isSettledImmediate ? (currentUser?.id || null) : null,
         status: 'completed'
       };
 
@@ -354,11 +364,11 @@ const CreateLoan: React.FC = () => {
         {
           loan_id: createdLoanId,
           description: `Entrada Operação Cartão (${formData.installments}x) [${machineLabel}]: ${personName}`,
-          amount: safeGrossAmount,
+          amount: machineNetBank,
           gross_amount: safeGrossAmount,
-          due_date: new Date().toISOString().split('T')[0],
+          due_date: settlementDueDate,
           type: 'receivable',
-          status: 'paid',
+          status: isSettledImmediate ? 'paid' : 'pending',
           category: 'Venda Cartão de Crédito',
           machine_id: formData.machine_id ? Number(formData.machine_id) || null : null
         }
@@ -701,7 +711,9 @@ const CreateLoan: React.FC = () => {
               required
             >
               {machines.map(m => (
-                <option key={m.id} value={m.id.toString()}>{m.name}</option>
+                <option key={m.id} value={m.id.toString()}>
+                  {m.name} — {Number(m.liquidation_days) === 0 ? '⚡ D+0 (Cai na hora / Mesmo dia)' : `📅 D+${m.liquidation_days || 1} (${m.liquidation_days === 1 ? 'Próximo dia útil' : `${m.liquidation_days} dias úteis`})`}
+                </option>
               ))}
             </select>
           </div>
@@ -881,13 +893,13 @@ const CreateLoan: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. Retenção da Maquininha (MDR) - Exclusivo Admin */}
+            {/* 4. Líquido a Receber da Maquininha (D+1 / D+0) - Exclusivo Admin */}
             {isAdmin && (
-              <div style={{ background: '#fff5f5', padding: '1.25rem', borderRadius: '16px', border: '1.5px solid #fecaca', boxShadow: '0 2px 6px rgba(185,28,28,0.05)' }}>
-                <span style={{ color: '#991b1b', fontSize: '0.75rem', display: 'block', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Retenção Maquininha</span>
-                <span style={{ color: '#dc2626', fontWeight: 900, fontSize: '1.5rem' }}>- R$ {formatCurrency(machineFeeAmount)}</span>
-                <div style={{ fontSize: '0.8rem', color: '#b91c1c', marginTop: '0.4rem', fontWeight: 700 }}>
-                  Taxa MDR: {machFeePercent.toFixed(2)}% da máquina
+              <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '16px', border: '1.5px solid #bbf7d0', boxShadow: '0 2px 6px rgba(4,120,87,0.05)' }}>
+                <span style={{ color: '#047857', fontSize: '0.75rem', display: 'block', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Líquido a Receber da Máquina</span>
+                <span style={{ color: '#047857', fontWeight: 900, fontSize: '1.5rem' }}>R$ {formatCurrency(Math.max(0, safeGrossAmount - machineFeeAmount))}</span>
+                <div style={{ fontSize: '0.75rem', color: '#dc2626', marginTop: '0.4rem', fontWeight: 700 }}>
+                  Taxa MDR: -R$ {formatCurrency(machineFeeAmount)} ({machFeePercent.toFixed(2)}%)
                 </div>
               </div>
             )}

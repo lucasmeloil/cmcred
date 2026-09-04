@@ -20,7 +20,9 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { calculateLoanFinancials } from '../lib/rates';
+import { calculateLoanFinancials, groupLoansByMachine, MachineSettlementSummary } from '../lib/rates';
+import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
+import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 interface LoanReportRow {
   id: string;
@@ -38,22 +40,46 @@ interface LoanReportRow {
   grossAmount: number; // Valor do Empréstimo / Total no Cartão
   machineFeeRate: number; // Taxa % Retida pela Maquininha
   machineFeeAmount: number; // Valor R$ Retido pela Maquininha
+  machineNetReceipt: number; // Valor Líquido que a Maquininha vai depositar para a CM CRED
   netAmount: number; // Valor Repassado ao Cliente (PIX)
   profit: number; // Ganhos / Juros Brutos
   commission: number; // Comissão do Operador
   companyNetProfit: number; // Lucro Líquido Real da CM CRED
   status: string;
   observations: string;
+  settlementStatus: string;
+  settlementDueDate: string;
+  isSettled: boolean;
+  settledAt: string | null;
+  liquidationDays: number;
 }
 
 const ReportsManager: React.FC = () => {
   const { addNotification, logAudit } = useAuth();
   
   // Data State
-  const [loans, setLoans] = useState<any[]>([]);
-  const [finance, setFinance] = useState<any[]>([]);
+  const [loans, setLoans] = useState<any[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_reports_loans');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
+  const [finance, setFinance] = useState<any[]>(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_reports_finance');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return [];
+  });
   const [consultants, setConsultants] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cmcred_cache_reports_loans');
+      if (cached) return false;
+    } catch {}
+    return true;
+  });
 
   // Filters State
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('month');
@@ -63,22 +89,35 @@ const ReportsManager: React.FC = () => {
   const [consultantFilter, setConsultantFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
+  const hasLoadedOnceRef = React.useRef(loans.length > 0);
+
   // Fetch initial data
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (isSilent = false) => {
+    if (!hasLoadedOnceRef.current && !isSilent) {
+      setLoading(true);
+    }
     try {
       const [loansRes, financeRes, profilesRes] = await Promise.all([
-        supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false }),
+        supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)').order('created_at', { ascending: false }),
         supabase.from('finance').select('*').order('due_date', { ascending: false }),
         supabase.from('profiles').select('id, full_name, role')
       ]);
 
-      if (loansRes.data) setLoans(loansRes.data);
-      if (financeRes.data) setFinance(financeRes.data);
+      if (loansRes.data && (loansRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+        setLoans(loansRes.data);
+        try { sessionStorage.setItem('cmcred_cache_reports_loans', JSON.stringify(loansRes.data)); } catch {}
+      }
+      if (financeRes.data && (financeRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+        setFinance(financeRes.data);
+        try { sessionStorage.setItem('cmcred_cache_reports_finance', JSON.stringify(financeRes.data)); } catch {}
+      }
       if (profilesRes.data) setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
+      hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar dados do relatório:', err);
-      addNotification('Erro ao carregar dados: ' + err.message, 'alerta');
+      if (!hasLoadedOnceRef.current) {
+        addNotification('Erro ao carregar dados: ' + err.message, 'alerta');
+      }
     } finally {
       setLoading(false);
     }
@@ -87,6 +126,9 @@ const ReportsManager: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Atualização automática dos relatórios ao alternar de aba (sem F5)
+  useAutoRefresh(fetchData, 30000);
 
   // Processar lista de operações com cálculo rigoroso de retenção da maquininha e lucro real
   const loansReportList = useMemo<LoanReportRow[]>(() => {
@@ -121,12 +163,18 @@ const ReportsManager: React.FC = () => {
         grossAmount: fin.grossAmount,
         machineFeeRate: fin.machineFeeRate,
         machineFeeAmount: fin.machineFeeAmount,
+        machineNetReceipt: fin.machineNetReceipt,
         netAmount: fin.netAmount,
         profit: fin.operationProfit,
         commission: fin.commissionAmount,
         companyNetProfit: fin.companyNetProfit,
         status: l.status || 'completed',
-        observations: l.observations || ''
+        observations: l.observations || '',
+        settlementStatus: fin.settlementStatus,
+        settlementDueDate: fin.settlementDueDate,
+        isSettled: fin.isSettled,
+        settledAt: fin.settledAt,
+        liquidationDays: fin.liquidationDays
       };
     });
   }, [loans]);
@@ -191,6 +239,7 @@ const ReportsManager: React.FC = () => {
   const totals = useMemo(() => {
     let totalGross = 0;
     let totalMachineFee = 0;
+    let totalMachineNet = 0;
     let totalNet = 0;
     let totalProfit = 0;
     let totalCommissions = 0;
@@ -200,6 +249,7 @@ const ReportsManager: React.FC = () => {
       if (l.status === 'rejected') return;
       totalGross += l.grossAmount;
       totalMachineFee += l.machineFeeAmount;
+      totalMachineNet += l.machineNetReceipt;
       totalNet += l.netAmount;
       totalProfit += l.profit;
       totalCommissions += l.commission;
@@ -210,11 +260,17 @@ const ReportsManager: React.FC = () => {
       count: filteredLoans.length,
       totalGross,
       totalMachineFee,
+      totalMachineNet,
       totalNet,
       totalProfit,
       totalCommissions,
       totalCompanyNet
     };
+  }, [filteredLoans]);
+
+  // Resumo de Conciliação e Valores a Receber por Maquininha (D+1 / D+0)
+  const machineSettlementList = useMemo(() => {
+    return groupLoansByMachine(filteredLoans.filter(l => l.status !== 'rejected'));
   }, [filteredLoans]);
 
   // EXPORTADOR EXCEL FORMATADO COM CORES, RETENÇÃO DE MAQUININHA E LUCRO LÍQUIDO REAL
@@ -288,58 +344,86 @@ const ReportsManager: React.FC = () => {
   <!-- BANNER EXECUTIVO -->
   <table>
     <tr>
-      <td colspan="16" class="header-banner">
-        CM CRED — DEMONSTRATIVO CONSOLIDADO: RETENÇÃO DE MÁQUINAS & LUCRO REAL
+      <td colspan="15" class="header-banner">
+        CM CRED — DEMONSTRATIVO CONSOLIDADO: CONTROLE FINANCEIRO & VALORES A RECEBER POR MAQUININHA
       </td>
     </tr>
     <tr>
-      <td colspan="16" class="sub-banner">
+      <td colspan="15" class="sub-banner">
         Gerado em: ${dateStr} às ${timeStr} | Filtro: ${period.toUpperCase()} | Total: ${totals.count} Operações Finalizadas
       </td>
     </tr>
-    <tr><td colspan="16" style="height: 10px; border: none;"></td></tr>
+    <tr><td colspan="15" style="height: 10px; border: none;"></td></tr>
   </table>
 
-  <!-- QUADRO DE RESUMO GERAL POR CORES (CARDS) -->
+  <!-- QUADRO DE RESUMO GERAL (CARDS) -->
   <table>
     <tr>
-      <td colspan="3" class="kpi-title" style="text-align: center;">VALOR EMPRÉSTIMO (CARTÃO)</td>
-      <td colspan="2" class="kpi-title" style="text-align: center;">RETENÇÃO MAQUININHA (MDR)</td>
+      <td colspan="3" class="kpi-title" style="text-align: center;">TOTAL CARTÃO (BRUTO)</td>
+      <td colspan="3" class="kpi-title" style="text-align: center;">A RECEBER MÁQUINAS (LÍQUIDO)</td>
       <td colspan="3" class="kpi-title" style="text-align: center;">REPASSE CLIENTES (PIX)</td>
-      <td colspan="2" class="kpi-title" style="text-align: center;">GANHOS / JUROS</td>
       <td colspan="2" class="kpi-title" style="text-align: center;">COMISSÕES OPERADORES</td>
       <td colspan="4" class="kpi-title" style="text-align: center;">LUCRO LÍQUIDO REAL CM CRED</td>
     </tr>
     <tr>
       <td colspan="3" class="kpi-card-blue">R$ ${formatBRL(totals.totalGross)}</td>
-      <td colspan="2" class="kpi-card-red">- R$ ${formatBRL(totals.totalMachineFee)}</td>
-      <td colspan="3" class="kpi-card-green">R$ ${formatBRL(totals.totalNet)}</td>
-      <td colspan="2" class="kpi-card-emerald">+ R$ ${formatBRL(totals.totalProfit)}</td>
+      <td colspan="3" class="kpi-card-green">R$ ${formatBRL(totals.totalMachineNet)}</td>
+      <td colspan="3" class="kpi-card-amber">R$ ${formatBRL(totals.totalNet)}</td>
       <td colspan="2" class="kpi-card-amber">R$ ${formatBRL(totals.totalCommissions)}</td>
       <td colspan="4" class="kpi-card-dark">R$ ${formatBRL(totals.totalCompanyNet)}</td>
     </tr>
-    <tr><td colspan="16" style="height: 15px; border: none;"></td></tr>
+    <tr><td colspan="15" style="height: 15px; border: none;"></td></tr>
   </table>
 
-  <!-- TABELA PRINCIPAL DE DADOS COM CORES DE COLUNAS -->
+  <!-- CONCILIAÇÃO CONSOLIDADA POR MAQUININHA (D+1 / D+0) -->
+  <table>
+    <thead>
+      <tr>
+        <th colspan="6" style="background-color: #0f172a; color: #ffffff; text-align: left; padding: 8px 12px; font-size: 11pt;">
+          CONCILIAÇÃO DE RECEBÍVEIS POR MAQUININHA (VALORES LÍQUIDOS A RECEBER NA CONTA BANCÁRIA)
+        </th>
+      </tr>
+      <tr>
+        <th style="width: 200px; background-color: #334155;">MAQUININHA POS</th>
+        <th style="width: 90px; background-color: #334155;">OPERAÇÕES</th>
+        <th style="width: 150px; background-color: #1e40af;">BRUTO NO CARTÃO</th>
+        <th style="width: 130px; background-color: #b91c1c;">TAXA MDR TOTAL</th>
+        <th style="width: 160px; background-color: #047857; color: #ffffff;">LÍQUIDO A RECEBER (CONTA)</th>
+        <th style="width: 150px; background-color: #d97706; color: #ffffff;">LUCRO REAL CM CRED</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${machineSettlementList.map(m => `
+      <tr>
+        <td style="font-weight: bold;">${m.machineName}</td>
+        <td style="text-align: center;">${m.count}</td>
+        <td style="text-align: right; color: #1e40af; font-weight: bold;">R$ ${formatBRL(m.totalGross)}</td>
+        <td style="text-align: right; color: #b91c1c;">- R$ ${formatBRL(m.totalFee)}</td>
+        <td style="text-align: right; color: #047857; font-weight: bold; background-color: #ecfdf5;">R$ ${formatBRL(m.totalNetReceipt)}</td>
+        <td style="text-align: right; color: #d97706; font-weight: bold;">R$ ${formatBRL(m.totalCompanyNetProfit)}</td>
+      </tr>`).join('')}
+    </tbody>
+    <tr><td colspan="6" style="height: 15px; border: none;"></td></tr>
+  </table>
+
+  <!-- TABELA PRINCIPAL DE LANÇAMENTOS -->
   <table>
     <thead>
       <tr>
         <th style="width: 140px;">DATA / HORA</th>
         <th style="width: 90px;">CONTRATO</th>
-        <th style="width: 220px;">NOME DO CLIENTE</th>
-        <th style="width: 130px;">CPF</th>
-        <th style="width: 180px;">OPERADOR</th>
-        <th style="width: 160px;">MAQUININHA POS</th>
-        <th style="width: 170px; background-color: #4f46e5; color: #ffffff;">CARTÃO / BANDEIRA</th>
-        <th style="width: 70px;">VEZES</th>
-        <th style="width: 80px;">TAXA %</th>
-        <th style="width: 150px; background-color: #1e40af;">EMPRÉSTIMO (CARTÃO)</th>
-        <th style="width: 140px; background-color: #b91c1c;">RETENÇÃO MÁQUINA</th>
-        <th style="width: 150px; background-color: #92400e;">REPASSE (PIX)</th>
-        <th style="width: 140px; background-color: #b45309;">GANHOS / JUROS</th>
-        <th style="width: 160px; background-color: #d97706; color: #ffffff;">LUCRO REAL CM CRED</th>
-        <th style="width: 110px;">STATUS</th>
+        <th style="width: 200px;">NOME DO CLIENTE</th>
+        <th style="width: 120px;">CPF</th>
+        <th style="width: 160px;">OPERADOR</th>
+        <th style="width: 150px;">MAQUININHA POS</th>
+        <th style="width: 160px; background-color: #4f46e5; color: #ffffff;">CARTÃO / BANDEIRA</th>
+        <th style="width: 60px;">VEZES</th>
+        <th style="width: 70px;">TAXA %</th>
+        <th style="width: 150px; background-color: #1e40af;">CARTÃO (BRUTO)</th>
+        <th style="width: 160px; background-color: #047857; color: #ffffff;">LÍQUIDO MÁQUINA (A RECEBER)</th>
+        <th style="width: 140px; background-color: #92400e;">REPASSE (PIX)</th>
+        <th style="width: 150px; background-color: #d97706; color: #ffffff;">LUCRO REAL CM CRED</th>
+        <th style="width: 100px;">STATUS</th>
       </tr>
     </thead>
     <tbody>
@@ -361,9 +445,8 @@ const ReportsManager: React.FC = () => {
           <td class="td-installments">${l.installments}x</td>
           <td class="td-rate">${l.interestRate.toFixed(2)}%</td>
           <td class="td-gross">R$ ${formatBRL(l.grossAmount)}</td>
-          <td class="td-retention">- R$ ${formatBRL(l.machineFeeAmount)} (${l.machineFeeRate.toFixed(1)}%)</td>
+          <td class="td-net" style="color: #047857; font-weight: bold; background-color: #ecfdf5;">R$ ${formatBRL(l.machineNetReceipt)} (taxa: -R$ ${formatBRL(l.machineFeeAmount)})</td>
           <td class="td-net">R$ ${formatBRL(l.netAmount)}</td>
-          <td class="td-profit">+ R$ ${formatBRL(l.profit)}</td>
           <td class="td-company">R$ ${formatBRL(l.companyNetProfit)}</td>
           <td class="td-status ${statusClass}">${statusLabel}</td>
         </tr>`;
@@ -377,14 +460,11 @@ const ReportsManager: React.FC = () => {
         <td style="text-align: right; background-color: #1e3a8a; color: #93c5fd;">
           R$ ${formatBRL(totals.totalGross)}
         </td>
-        <td style="text-align: right; background-color: #7f1d1d; color: #fca5a5;">
-          - R$ ${formatBRL(totals.totalMachineFee)}
+        <td style="text-align: right; background-color: #064e3b; color: #86efac; font-weight: bold;">
+          R$ ${formatBRL(totals.totalMachineNet)}
         </td>
-        <td style="text-align: right; background-color: #14532d; color: #86efac;">
+        <td style="text-align: right; background-color: #78350f; color: #fde68a;">
           R$ ${formatBRL(totals.totalNet)}
-        </td>
-        <td style="text-align: right; background-color: #064e3b; color: #6ee7b7;">
-          + R$ ${formatBRL(totals.totalProfit)}
         </td>
         <td style="text-align: right; background-color: #d97706; color: #ffffff; font-size: 12pt;">
           R$ ${formatBRL(totals.totalCompanyNet)}
@@ -410,8 +490,8 @@ const ReportsManager: React.FC = () => {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      await logAudit('exportação', `Planilha Excel detalhada com retenção e lucro exportada (${totals.count} registros).`);
-      addNotification('Planilha Excel com Retenções e Lucro Real exportada com sucesso!', 'sucesso');
+      await logAudit('exportação', `Planilha Excel com valores a receber por máquina exportada (${totals.count} registros).`);
+      addNotification('Planilha Excel com Valores a Receber por Máquina exportada com sucesso!', 'sucesso');
     } catch (e: any) {
       addNotification('Erro ao exportar Excel: ' + e.message, 'alerta');
     }
@@ -431,7 +511,7 @@ const ReportsManager: React.FC = () => {
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.text('CM CRED — DEMONSTRATIVO DE RETENÇÕES & LUCRO LÍQUIDO', 15, 14);
+      doc.text('CM CRED — CONTROLE FINANCEIRO & VALORES A RECEBER POR MAQUININHA', 15, 14);
 
       doc.setFontSize(9);
       doc.setFont('helvetica', 'normal');
@@ -444,13 +524,13 @@ const ReportsManager: React.FC = () => {
       doc.setTextColor(0, 0, 0);
       doc.setFontSize(8.5);
       doc.setFont('helvetica', 'bold');
-      doc.text(`Empréstimo (Cartão): R$ ${totals.totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 18, 41);
-      doc.text(`Retenção Máquinas: -R$ ${totals.totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 78, 41);
+      doc.text(`Cartão (Bruto): R$ ${totals.totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 18, 41);
+      doc.text(`A Receber Líquido: R$ ${totals.totalMachineNet.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 78, 41);
       doc.text(`PIX Clientes: R$ ${totals.totalNet.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 140, 41);
-      doc.text(`Lucro Real CM CRED: R$ ${totals.totalCompanyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 200, 41);
+      doc.text(`Lucro Real CM CRED: R$ ${totals.totalCompanyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 202, 41);
 
       // Tabela de Dados
-      const head = [['DATA', 'ID', 'CLIENTE', 'OPERADOR', 'MAQUININHA', 'CARTÃO / BANDEIRA', 'VEZES', 'CARTÃO R$', 'RETENÇÃO R$', 'PIX R$', 'GANHOS R$', 'LUCRO REAL R$', 'STATUS']];
+      const head = [['DATA', 'ID', 'CLIENTE', 'OPERADOR', 'MAQUININHA', 'BANDEIRA', 'VEZES', 'CARTÃO R$', 'A RECEBER MÁQ.', 'PIX R$', 'LUCRO REAL R$', 'STATUS']];
       const body = filteredLoans.map(l => [
         new Date(l.createdAt).toLocaleDateString('pt-BR'),
         `#${l.id.slice(0, 6).toUpperCase()}`,
@@ -460,9 +540,8 @@ const ReportsManager: React.FC = () => {
         l.cardInfo,
         `${l.installments}x`,
         `R$ ${l.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-        `- R$ ${l.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+        `R$ ${l.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
         `R$ ${l.netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-        `R$ ${l.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
         `R$ ${l.companyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
         l.status.toUpperCase()
       ]);
@@ -476,10 +555,9 @@ const ReportsManager: React.FC = () => {
         styles: { fontSize: 7.5, cellPadding: 2.5 },
         columnStyles: {
           7: { halign: 'right', fontStyle: 'bold', textColor: [37, 99, 235] },
-          8: { halign: 'right', fontStyle: 'bold', textColor: [220, 38, 38] },
-          9: { halign: 'right', fontStyle: 'bold', textColor: [0, 168, 89] },
-          10: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105] },
-          11: { halign: 'right', fontStyle: 'bold', textColor: [217, 119, 6] }
+          8: { halign: 'right', fontStyle: 'bold', textColor: [4, 120, 87] },
+          9: { halign: 'right', fontStyle: 'bold', textColor: [180, 83, 9] },
+          10: { halign: 'right', fontStyle: 'bold', textColor: [217, 119, 6] }
         },
         margin: { left: 15, right: 15 }
       });
@@ -565,31 +643,36 @@ const ReportsManager: React.FC = () => {
         </div>
       </header>
 
-      {/* Cards de Totais Consolidado com Retenção de Maquininha e Lucro Real */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+      {/* BANNER DE NOTIFICAÇÃO INTELIGENTE: CONFIRMAÇÃO DE RECEBIMENTO COM 1 CLIQUE */}
+      <MachineSettlementAlertBanner loans={loans} onSettlementSuccess={fetchData} />
+
+      {/* Cards de Totais Consolidado com Foco no Líquido a Receber e Lucro Real */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
         
         {/* Total Passado no Cartão */}
         <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '5px solid #2563eb', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-            <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Valor Empréstimo (Cartão)</span>
+            <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Valor no Cartão (Bruto)</span>
             <CreditCard size={18} color="#2563eb" />
           </div>
-          <div style={{ color: '#1e40af', fontSize: '1.4rem', fontWeight: 900 }}>
+          <div style={{ color: '#1e40af', fontSize: '1.5rem', fontWeight: 900 }}>
             R$ {totals.totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>Total bruto nas maquininhas</span>
+          <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>Total transacionado nos clientes</span>
         </div>
 
-        {/* Retenção Total da Maquininha */}
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '5px solid #ef4444', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
+        {/* Líquido a Receber das Maquininhas */}
+        <div style={{ background: '#ffffff', border: '1px solid #bbf7d0', borderLeft: '5px solid #059669', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 4px 12px rgba(5,150,105,0.06)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-            <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Retenção Maquininha (MDR)</span>
-            <TrendingDown size={18} color="#ef4444" />
+            <span style={{ color: '#047857', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>A Receber das Máquinas (Líquido)</span>
+            <CheckCircle2 size={18} color="#059669" />
           </div>
-          <div style={{ color: '#dc2626', fontSize: '1.4rem', fontWeight: 900 }}>
-            - R$ {totals.totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <div style={{ color: '#047857', fontSize: '1.5rem', fontWeight: 900 }}>
+            R$ {totals.totalMachineNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>Custo retido pelas adquirentes</span>
+          <span style={{ color: '#64748b', fontSize: '0.73rem', fontWeight: 600 }}>
+            Cai na conta após taxa de -R$ {totals.totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          </span>
         </div>
 
         {/* Total Repassado ao Cliente PIX */}
@@ -598,34 +681,22 @@ const ReportsManager: React.FC = () => {
             <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Repassado ao Cliente (PIX)</span>
             <Wallet size={18} color="#d97706" />
           </div>
-          <div style={{ color: '#d97706', fontSize: '1.4rem', fontWeight: 900 }}>
+          <div style={{ color: '#d97706', fontSize: '1.5rem', fontWeight: 900 }}>
             R$ {totals.totalNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>Total líquido liberado ao portador</span>
         </div>
 
-        {/* Total de Ganhos / Juros Brutos */}
-        <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderLeft: '5px solid #f59e0b', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 4px 12px rgba(0,0,0,0.03)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-            <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>Ganhos Totais (Juros)</span>
-            <TrendingUp size={18} color="#f59e0b" />
-          </div>
-          <div style={{ color: '#b45309', fontSize: '1.4rem', fontWeight: 900 }}>
-            + R$ {totals.totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600 }}>Spread Bruto Cartão - PIX</span>
-        </div>
-
         {/* Lucro Líquido Real da CM CRED */}
-        <div style={{ background: '#ffffff', border: '2px solid #d97706', borderLeft: '6px solid #d97706', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 8px 20px rgba(217,119,6,0.1)' }}>
+        <div style={{ background: '#ffffff', border: '2px solid #d97706', borderLeft: '6px solid #d97706', borderRadius: '18px', padding: '1.25rem', boxShadow: '0 8px 20px rgba(217,119,6,0.12)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
             <span style={{ color: '#d97706', fontSize: '0.75rem', fontWeight: 900, textTransform: 'uppercase' }}>Lucro Real CM CRED</span>
             <DollarSign size={18} color="#d97706" />
           </div>
-          <div style={{ color: '#0f172a', fontSize: '1.5rem', fontWeight: 900 }}>
+          <div style={{ color: '#0f172a', fontSize: '1.6rem', fontWeight: 900 }}>
             R$ {totals.totalCompanyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <span style={{ color: '#b45309', fontSize: '0.75rem', fontWeight: 800 }}>Após retenção de máquina e comissão</span>
+          <span style={{ color: '#b45309', fontSize: '0.75rem', fontWeight: 800 }}>Líquido retido na empresa (Líquido Máq - PIX)</span>
         </div>
 
       </div>
@@ -692,7 +763,80 @@ const ReportsManager: React.FC = () => {
 
       </div>
 
-      {/* PLANILHA DE OPERAÇÕES COM RETENÇÃO E LUCRO REAL */}
+      {/* PAINEL DE CONCILIAÇÃO POR MAQUININHA (A RECEBER LÍQUIDO D+1 / D+0) */}
+      {machineSettlementList.length > 0 && (
+        <div style={{ background: '#ffffff', border: '1.5px solid #cbd5e1', borderRadius: '24px', padding: '1.5rem', marginBottom: '2rem', boxShadow: '0 4px 14px rgba(0,0,0,0.03)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ width: '42px', height: '42px', borderRadius: '14px', background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Cpu size={22} color="#2563eb" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 900, color: '#0f172a' }}>
+                  Conciliação & Valores a Receber por Maquininha (D+1 / D+0)
+                </h3>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                  Valores líquidos que as adquirentes (Cielo, Rede, PagSeguro, Stone, etc.) depositarão na conta bancária da CM CRED já deduzidas as taxas.
+                </p>
+              </div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '8px 16px', borderRadius: '12px', border: '1.5px solid #e2e8f0', fontSize: '0.82rem', fontWeight: 800, color: '#475569' }}>
+              Total Geral a Cair no Caixa: <strong style={{ color: '#047857', fontSize: '1.05rem', marginLeft: '4px' }}>R$ {totals.totalMachineNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(270px, 1fr))', gap: '1.1rem' }}>
+            {machineSettlementList.map((m, idx) => (
+              <div 
+                key={idx}
+                style={{ 
+                  background: '#f8fafc', 
+                  border: '1.5px solid #e2e8f0', 
+                  borderRadius: '18px', 
+                  padding: '1.25rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.6rem',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 900, fontSize: '1rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <CreditCard size={18} color="#2563eb" /> {m.machineName}
+                  </span>
+                  <span style={{ background: '#e2e8f0', color: '#334155', fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '8px' }}>
+                    {m.count} {m.count === 1 ? 'operação' : 'operações'}
+                  </span>
+                </div>
+
+                <div style={{ background: '#ffffff', border: '1.5px solid #bbf7d0', borderRadius: '14px', padding: '0.85rem', marginTop: '0.2rem' }}>
+                  <span style={{ fontSize: '0.7rem', color: '#047857', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block' }}>
+                    Líquido a Receber na Conta (D+1 / D+0)
+                  </span>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 900, color: '#047857', marginTop: '0.2rem' }}>
+                    R$ {m.totalNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: 600, marginTop: '0.2rem' }}>
+                    Taxa MDR retida: -R$ {m.totalFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#64748b', fontWeight: 700, padding: '0 0.2rem' }}>
+                  <span>Passado no Cartão:</span>
+                  <strong style={{ color: '#1e40af' }}>R$ {m.totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#d97706', fontWeight: 800, background: '#fffbeb', border: '1px solid #fef3c7', padding: '6px 10px', borderRadius: '8px' }}>
+                  <span>Lucro Real CM CRED:</span>
+                  <strong style={{ fontSize: '0.88rem' }}>R$ {m.totalCompanyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* PLANILHA DE OPERAÇÕES: VALORES A RECEBER E LUCRO REAL */}
       <div style={{ background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '20px', overflow: 'hidden', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.04)' }}>
         
         {/* Cabeçalho da Planilha */}
@@ -700,7 +844,7 @@ const ReportsManager: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
             <Table size={20} color="#d97706" />
             <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 900, letterSpacing: '0.5px' }}>
-              Planilha de Lançamentos: Retenção de Maquininha & Lucro Real
+              Planilha de Lançamentos: Valores a Receber por Máquina & Lucro Real
             </h3>
           </div>
           <div style={{ background: '#d97706', color: '#fff', padding: '0.35rem 0.85rem', borderRadius: '10px', fontSize: '0.8rem', fontWeight: 800 }}>
@@ -729,10 +873,9 @@ const ReportsManager: React.FC = () => {
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'left', borderRight: '1px solid #e2e8f0', background: '#eef2ff', color: '#4338ca' }}>Cartão / Bandeira</th>
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>Vezes</th>
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'center', borderRight: '1px solid #e2e8f0' }}>Taxa %</th>
-                  <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#dbeafe', color: '#1e40af' }}>Valor Empréstimo (Cartão)</th>
-                  <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#fee2e2', color: '#dc2626' }}>Retenção Máquina</th>
+                  <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#dbeafe', color: '#1e40af' }}>Valor Cartão (Bruto)</th>
+                  <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#ecfdf5', color: '#047857' }}>A Receber (Líquido Máquina)</th>
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#fffbeb', color: '#b45309' }}>Repasse PIX (Cliente)</th>
-                  <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#fef3c7', color: '#92400e' }}>Ganhos / Juros</th>
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'right', borderRight: '1px solid #e2e8f0', background: '#fffbeb', color: '#d97706', fontWeight: 900 }}>Lucro Real CM CRED</th>
                   <th style={{ padding: '1rem 0.75rem', textAlign: 'center' }}>Status</th>
                 </tr>
@@ -823,10 +966,14 @@ const ReportsManager: React.FC = () => {
                         R$ {l.grossAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
-                      {/* Retenção Maquininha */}
-                      <td style={{ padding: '0.85rem 0.75rem', borderRight: '1px solid #f1f5f9', textAlign: 'right', color: '#dc2626', fontWeight: 800, background: isEven ? '#fff5f5' : '#fee2e2' }}>
-                        - R$ {l.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        <div style={{ fontSize: '0.7rem', color: '#991b1b', fontWeight: 600 }}>({l.machineFeeRate.toFixed(1)}%)</div>
+                      {/* Líquido a Receber da Máquina */}
+                      <td style={{ padding: '0.85rem 0.75rem', borderRight: '1px solid #f1f5f9', textAlign: 'right', background: isEven ? '#f0fdf4' : '#dcfce7' }}>
+                        <div style={{ color: '#047857', fontWeight: 900, fontSize: '0.95rem' }}>
+                          R$ {l.machineNetReceipt.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>
+                          Taxa: -R$ {l.machineFeeAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({l.machineFeeRate.toFixed(1)}%)
+                        </div>
                       </td>
 
                       {/* Repasse PIX Cliente */}
@@ -834,21 +981,29 @@ const ReportsManager: React.FC = () => {
                         R$ {l.netAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
-                      {/* Ganhos / Juros */}
-                      <td style={{ padding: '0.85rem 0.75rem', borderRight: '1px solid #f1f5f9', textAlign: 'right', color: '#92400e', fontWeight: 900 }}>
-                        + R$ {l.profit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </td>
-
                       {/* Lucro Real CM CRED */}
-                      <td style={{ padding: '0.85rem 0.75rem', borderRight: '1px solid #f1f5f9', textAlign: 'right', color: '#d97706', fontWeight: 900, fontSize: '0.95rem' }}>
+                      <td style={{ padding: '0.85rem 0.75rem', borderRight: '1px solid #f1f5f9', textAlign: 'right', color: '#d97706', fontWeight: 900, fontSize: '0.98rem', background: '#fffbeb' }}>
                         R$ {l.companyNetProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
 
                       {/* Status */}
                       <td style={{ padding: '0.85rem 0.75rem', textAlign: 'center' }}>
-                        <span style={{ background: badge.bg, color: badge.color, padding: '4px 10px', borderRadius: '10px', fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                          {badge.label}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'center' }}>
+                          <span style={{ background: badge.bg, color: badge.color, padding: '3px 9px', borderRadius: '8px', fontWeight: 800, fontSize: '0.72rem', textTransform: 'uppercase' }}>
+                            {badge.label}
+                          </span>
+                          <span style={{
+                            fontSize: '0.68rem',
+                            fontWeight: 800,
+                            padding: '2px 7px',
+                            borderRadius: '6px',
+                            background: l.isSettled ? '#ecfdf5' : '#fffbeb',
+                            color: l.isSettled ? '#047857' : '#b45309',
+                            border: `1px solid ${l.isSettled ? '#a7f3d0' : '#fde68a'}`
+                          }}>
+                            {l.isSettled ? '✓ Caixa Confirmado' : `⏳ D+${l.liquidationDays} (Pendente)`}
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -864,19 +1019,19 @@ const ReportsManager: React.FC = () => {
                   <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#60a5fa', background: '#1e293b' }}>
                     R$ {totals.totalGross.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#f87171', background: '#450a0a' }}>
-                    - R$ {totals.totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#86efac', background: '#064e3b', fontWeight: 900 }}>
+                    R$ {totals.totalMachineNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <div style={{ fontSize: '0.7rem', color: '#fca5a5', fontWeight: 600 }}>
+                      Taxas: -R$ {totals.totalMachineFee.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </div>
                   </td>
                   <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#fbbf24', background: '#451a03' }}>
                     R$ {totals.totalNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#fde68a', background: '#78350f' }}>
-                    + R$ {totals.totalProfit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                  <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#ffffff', background: '#d97706', fontSize: '1rem' }}>
+                  <td style={{ padding: '1rem 0.75rem', textAlign: 'right', color: '#ffffff', background: '#d97706', fontSize: '1.05rem' }}>
                     R$ {totals.totalCompanyNet.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
-                  <td style={{ padding: '1rem 0.75rem', textAlign: 'center' }}>—</td>
+                  <td style={{ padding: '1rem 0.75rem', textAlign: 'center' }}>100% OK</td>
                 </tr>
               </tfoot>
             </table>
