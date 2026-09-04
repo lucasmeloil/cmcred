@@ -46,29 +46,20 @@ export function useAutoRefresh(
       }
     }, intervalMs);
 
-    // 2. Re-execução suave ao retornar para a aba após inatividade
+    // 2. Re-execução suave ao retornar para a aba após inatividade (mínimo 20 segundos)
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        // Se ficou inativo por mais de 15 segundos, atualiza em segundo plano sem piscar a tela
-        if (Date.now() - lastRunRef.current > 15000) {
+        if (Date.now() - lastRunRef.current > 20000) {
           executeRefresh(true);
         }
       }
     };
 
-    const handleWindowFocus = () => {
-      if (Date.now() - lastRunRef.current > 15000) {
-        executeRefresh(true);
-      }
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleWindowFocus);
 
     return () => {
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleWindowFocus);
     };
   }, [intervalMs, enabled]);
 }

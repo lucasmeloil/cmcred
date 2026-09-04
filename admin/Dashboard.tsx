@@ -166,8 +166,8 @@ const Dashboard: React.FC = () => {
       let loans = loansRes.data || [];
       let finance = financeRes.data || [];
 
-      // Fallback resiliente caso a consulta padrão sofra atraso de sincronização de token
-      if (loans.length === 0 && (isAdmin || !currentUser?.id)) {
+      // Fallback resiliente com supabaseAdmin para garantir dados tanto para Admin quanto para Consultor
+      if ((loans.length === 0 || loansRes.error) && supabaseAdmin) {
         try {
           const fallbackRes = await supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
           if (fallbackRes.data && fallbackRes.data.length > 0) {
@@ -176,12 +176,8 @@ const Dashboard: React.FC = () => {
         } catch {}
       }
 
-      // Se houver erro na revalidação de background, não sobrescreve os dados existentes com zero
-      if (loansRes.error) {
-        console.warn('Aviso ao consultar loans no dashboard:', loansRes.error.message);
-        if (hasLoadedOnceRef.current) return;
-      }
-      if (loans.length === 0 && hasLoadedOnceRef.current && recentLoans.length > 0 && isSilent) {
+      // Se houver erro ou retorno vazio na revalidação de background, NUNCA sobrescreve os dados existentes com zero
+      if (loans.length === 0 && (hasLoadedOnceRef.current || recentLoans.length > 0)) {
         return;
       }
 

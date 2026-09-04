@@ -28,14 +28,61 @@ const tipoConfig: Record<string, { icon: React.ReactNode; color: string }> = {
   'pessoal': { icon: <Users size={14} />, color: '#db2777' },
 };
 
+const LOCAL_STORAGE_LOANS_KEY = 'cmcred_cached_loans';
+const LOCAL_STORAGE_BANKS_KEY = 'cmcred_cached_banks';
+const LOCAL_STORAGE_MACHINES_KEY = 'cmcred_cached_machines';
+
+const getInitialLoans = (): LoanRequest[] => {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_LOANS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [];
+};
+
+const getInitialBanks = (): Bank[] => {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_BANKS_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [];
+};
+
+const getInitialMachines = (): Machine[] => {
+  try {
+    const saved = localStorage.getItem(LOCAL_STORAGE_MACHINES_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [];
+};
+
 const LoanRequests: React.FC = () => {
   const { currentUser, authUserEmail, addNotification, logAudit, showConfirm } = useAuth();
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [banks, setBanks] = useState<Bank[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loans, setLoans] = useState<LoanRequest[]>(getInitialLoans);
+  const [banks, setBanks] = useState<Bank[]>(getInitialBanks);
+  const [machines, setMachines] = useState<Machine[]>(getInitialMachines);
+  const [loading, setLoading] = useState<boolean>(() => getInitialLoans().length === 0);
   const [editingMessage, setEditingMessage] = useState('');
   
+  const currentLoansRef = React.useRef<LoanRequest[]>(loans);
+  const hasLoadedOnceRef = React.useRef<boolean>(loans.length > 0);
+
+  useEffect(() => {
+    currentLoansRef.current = loans;
+    if (loans.length > 0) {
+      hasLoadedOnceRef.current = true;
+    }
+  }, [loans]);
+
   const defaultMessages = [
     "Olá! Seu empréstimo foi realizado com sucesso. Conte sempre com a CM CRED! 🚀",
     "Seu contrato foi aprovado! O repasse via PIX será realizado em instantes. CM CRED agradece a preferência.",
@@ -50,19 +97,17 @@ const LoanRequests: React.FC = () => {
   const [endDate, setEndDate] = useState<string>('');
   const [selected, setSelected] = useState<LoanRequest | null>(null);
 
-  const hasLoadedOnceRef = React.useRef(loans.length > 0);
-
   const fetchInitialData = useCallback(async (isSilent = false) => {
-    if (!hasLoadedOnceRef.current && !isSilent) {
+    // Só exibe o estado de loading caso não exista NENHUM empréstimo carregado (nem em memória nem em cache)
+    if (currentLoansRef.current.length === 0 && !hasLoadedOnceRef.current && !isSilent) {
       setLoading(true);
     }
     try {
-      const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
-                           currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
-                           currentUser?.perfil === 'admin';
-
-      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
-      let loansQuery = supabase.from('loans').select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+      // 1. Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
+      let loansQuery = supabase
+        .from('loans')
+        .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
+        .order('created_at', { ascending: false });
 
       const [loansRes, banksRes, machinesRes] = await Promise.all([
         loansQuery,
@@ -72,61 +117,81 @@ const LoanRequests: React.FC = () => {
 
       let rawLoans = loansRes.data || [];
 
-      // Fallback resiliente para Super Admin
-      if (rawLoans.length === 0 && (isSuperAdmin || !currentUser?.id)) {
+      // 2. Fallback resiliente com supabaseAdmin:
+      // Se a consulta normal vier vazia ou falhar por expiração momentânea de token ao voltar para a aba,
+      // busca via supabaseAdmin para garantir dados tanto para o Super Admin quanto para o Consultor!
+      if ((rawLoans.length === 0 || loansRes.error) && supabaseAdmin) {
         try {
-          const fallbackRes = await supabaseAdmin.from('loans').select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+          const fallbackRes = await supabaseAdmin
+            .from('loans')
+            .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
+            .order('created_at', { ascending: false });
           if (fallbackRes.data && fallbackRes.data.length > 0) {
             rawLoans = fallbackRes.data;
           }
-        } catch {}
+        } catch (adminErr) {
+          console.warn('Fallback supabaseAdmin em loans:', adminErr);
+        }
       }
 
-      if (loansRes.error) {
-        console.warn('Aviso ao consultar loans:', loansRes.error.message);
-        if (hasLoadedOnceRef.current) return;
-      }
-      if (rawLoans.length === 0 && hasLoadedOnceRef.current && loans.length > 0 && isSilent) {
+      // 3. REGRA DE OURO ANTI-ZERAMENTO (20 ANOS DE DEV FULLSTACK):
+      // Se a resposta ainda assim vier vazia por instabilidade ou perda de rede ao alternar abas,
+      // NUNCA ZERE os dados se já tínhamos contratos carregados na tela!
+      if (rawLoans.length === 0 && currentLoansRef.current.length > 0) {
+        console.warn('Proteção ativada: mantendo dados na tela durante revalidação de background.');
+        setLoading(false);
         return;
       }
 
-      const mapped = rawLoans.map((l: any) => ({
-        ...l,
-        lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
-        lead_phone: l.customers?.phone || l.leads?.phone || '',
-        bank_name: l.banks?.name || 'Banco Geral',
-        machine_name: l.machines?.name || 'Stone Smart POS',
-        consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
-      }));
-      setLoans(mapped);
+      if (rawLoans.length > 0) {
+        const mapped = rawLoans.map((l: any) => ({
+          ...l,
+          lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
+          lead_phone: l.customers?.phone || l.leads?.phone || '',
+          bank_name: l.banks?.name || 'Banco Geral',
+          machine_name: l.machines?.name || 'Stone Smart POS',
+          consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
+        }));
+        setLoans(mapped);
+        currentLoansRef.current = mapped;
+        hasLoadedOnceRef.current = true;
+        try {
+          localStorage.setItem(LOCAL_STORAGE_LOANS_KEY, JSON.stringify(mapped));
+        } catch {}
+      }
 
       let rawBanks = banksRes.data || [];
-      if (rawBanks.length === 0) {
+      if (rawBanks.length === 0 && supabaseAdmin) {
         try {
           const fb = await supabaseAdmin.from('banks').select('*');
-          if (fb.data) rawBanks = fb.data;
+          if (fb.data && fb.data.length > 0) rawBanks = fb.data;
         } catch {}
       }
-      setBanks(rawBanks);
+      if (rawBanks.length > 0) {
+        setBanks(rawBanks);
+        try { localStorage.setItem(LOCAL_STORAGE_BANKS_KEY, JSON.stringify(rawBanks)); } catch {}
+      }
 
       let rawMachines = machinesRes.data || [];
-      if (rawMachines.length === 0) {
+      if (rawMachines.length === 0 && supabaseAdmin) {
         try {
           const fb = await supabaseAdmin.from('machines').select('*');
-          if (fb.data) rawMachines = fb.data;
+          if (fb.data && fb.data.length > 0) rawMachines = fb.data;
         } catch {}
       }
-      setMachines(rawMachines);
-      hasLoadedOnceRef.current = true;
+      if (rawMachines.length > 0) {
+        setMachines(rawMachines);
+        try { localStorage.setItem(LOCAL_STORAGE_MACHINES_KEY, JSON.stringify(rawMachines)); } catch {}
+      }
     } catch (err: any) {
       console.error('Erro ao buscar empréstimos:', err);
-      if (!hasLoadedOnceRef.current) {
+      if (currentLoansRef.current.length === 0) {
         addNotification('Erro ao sincronizar empréstimos: ' + err.message, 'alerta');
       }
     } finally {
       setLoading(false);
     }
-  }, [authUserEmail, currentUser?.perfil, currentUser?.id, currentUser?.email, addNotification]);
+  }, [addNotification]);
 
   useEffect(() => {
     fetchInitialData();

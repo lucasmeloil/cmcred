@@ -66,6 +66,8 @@ const MachinesManager: React.FC = () => {
   const isAdmin = currentUser?.perfil === 'admin' || 
                   currentUser?.email?.toLowerCase().includes('admin') || 
                   currentUser?.email?.toLowerCase().includes('cmcred');
+  // Permite que tanto o Admin Geral quanto o Consultor possam visualizar, cadastrar e editar maquininhas e prazos (D+0, D+1, D+2)
+  const canManageMachines = true;
   
   const [machines, setMachines] = useState<MachineModel[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -487,7 +489,7 @@ const MachinesManager: React.FC = () => {
           </p>
         </div>
 
-        {isAdmin && (
+        {canManageMachines && (
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <button 
               type="button"
@@ -591,8 +593,8 @@ const MachinesManager: React.FC = () => {
                     </div>
                   </div>
 
-                  {isAdmin && (
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    {canManageMachines && (
                       <button 
                         type="button" 
                         onClick={() => handleEdit(m)}
@@ -601,6 +603,8 @@ const MachinesManager: React.FC = () => {
                       >
                         <Edit3 size={15} color="#2563eb" />
                       </button>
+                    )}
+                    {isAdmin && (
                       <button 
                         type="button" 
                         onClick={() => handleDeleteMachine(m.id, m.name)}
@@ -609,8 +613,8 @@ const MachinesManager: React.FC = () => {
                       >
                         <Trash2 size={15} />
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 {/* Estatísticas Rápidas */}

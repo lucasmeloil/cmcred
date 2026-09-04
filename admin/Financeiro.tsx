@@ -115,7 +115,7 @@ const Financeiro: React.FC = () => {
       let rawLoans = loansRes.data || [];
 
       // Fallback resiliente com supabaseAdmin para evitar RLS/token latency ao voltar de aba
-      if ((rawLoans.length === 0 || rawFinance.length === 0) && (isSuperAdmin || !currentUser?.id)) {
+      if ((rawLoans.length === 0 || rawFinance.length === 0) && supabaseAdmin) {
         try {
           if (rawLoans.length === 0) {
             let adminLoansQuery = supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
@@ -147,19 +147,23 @@ const Financeiro: React.FC = () => {
         if (loansRes.error) console.warn('Aviso loans:', loansRes.error.message);
         if (hasLoadedOnceRef.current) return;
       }
-      if (rawFinance.length === 0 && hasLoadedOnceRef.current && data.length > 0 && isSilent) {
+      if ((rawFinance.length === 0 || rawLoans.length === 0) && hasLoadedOnceRef.current && (data.length > 0 || loans.length > 0)) {
         return;
       }
 
       // REGRA DE OURO: Nunca apague dados válidos existentes na tela durante atualização de background
-      setData(rawFinance);
-      const mappedLoans = rawLoans.map((l: any) => ({
-        ...l,
-        lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
-        bank_name: l.banks?.name,
-        machine_name: l.machines?.name
-      }));
-      setLoans(mappedLoans);
+      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
+        setData(rawFinance);
+      }
+      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
+        const mappedLoans = rawLoans.map((l: any) => ({
+          ...l,
+          lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
+          bank_name: l.banks?.name,
+          machine_name: l.machines?.name
+        }));
+        setLoans(mappedLoans);
+      }
       hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar dados financeiros:', err);
