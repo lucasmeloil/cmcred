@@ -224,7 +224,7 @@ const CreateLoan: React.FC = () => {
       window.removeEventListener('bonuscred_flags_updated', handleRatesUpdate);
       supabase.removeChannel(channel);
     };
-  }, [currentUser, rateTableType]);
+  }, [currentUser?.id, currentUser?.perfil, rateTableType]);
 
   // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
   useAutoRefresh(fetchData, 30000);

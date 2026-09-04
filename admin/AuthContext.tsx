@@ -62,11 +62,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const isExplicitLogoutRef = React.useRef(false);
+  const currentUserRef = React.useRef<AdminUser | null>(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
-  // Sessão persistente ativa sem auto-logout por inatividade (não encerra ao sair da aba)
+  const activeSessionUserIdRef = React.useRef<string | null>(null);
+  const inFlightProfileRef = React.useRef<string | null>(null);
+  const lastProfileFetchTimeRef = React.useRef<number>(0);
 
-  // Fetch profile when session changes
+  // Fetch profile when session changes with deduplication and in-flight guard
   const fetchProfile = useCallback(async (userId: string, fallbackEmail?: string) => {
+    if (!userId) return;
+
+    // Evita múltiplas chamadas concorrentes idênticas
+    if (inFlightProfileRef.current === userId) return;
+
+    // Throttle inteligente: se já buscou este mesmo perfil há menos de 3 segundos, não re-busca
+    const now = Date.now();
+    if (
+      currentUserRef.current?.id === userId && 
+      now - lastProfileFetchTimeRef.current < 3000
+    ) {
+      return;
+    }
+
+    inFlightProfileRef.current = userId;
+    lastProfileFetchTimeRef.current = now;
+
     try {
       const isSuperAdminFallback = fallbackEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
         fallbackEmail?.toLowerCase().includes('caique') ||
@@ -78,7 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq('id', userId)
         .maybeSingle();
 
-      const email = data?.email || fallbackEmail || (currentUser?.email) || '';
+      const email = data?.email || fallbackEmail || (currentUserRef.current?.email) || '';
       const isSuperAdmin = isSuperAdminFallback ||
         email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
         email.toLowerCase().includes('caique') ||
@@ -97,6 +120,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logs: true, pessoas: true, simulador: true
       };
 
+      const resolvedPermissions: UserPermissions = (isSuperAdmin || isAdminUser) ? allPermissions : (() => {
+        const basePerms = data?.permissions ? { ...DEFAULT_PERMISSIONS, ...data.permissions } : { ...DEFAULT_PERMISSIONS };
+        return {
+          ...basePerms,
+          users: false,
+          usuarios: false,
+          audit: false,
+          logs: false
+        };
+      })();
+
       const userToSet: AdminUser = {
         id: userId,
         nome: isSuperAdmin ? 'Caique' : (data?.full_name || email.split('@')[0]),
@@ -104,19 +138,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         perfil: (isSuperAdmin || isAdminUser) ? 'admin' : ((data?.role as any) || 'consultant'),
         status: isSuperAdmin ? 'active' : ((data?.status as any) || 'active'),
         commission_percentage: data?.commission_percentage ? Number(data.commission_percentage) : 0,
-        permissions: (isSuperAdmin || isAdminUser) ? allPermissions : (() => {
-          const basePerms = data?.permissions ? { ...DEFAULT_PERMISSIONS, ...data.permissions } : { ...DEFAULT_PERMISSIONS };
-          return {
-            ...basePerms,
-            users: false,
-            usuarios: false,
-            audit: false,
-            logs: false
-          };
-        })(),
-        dataCriacao: data?.created_at || new Date().toISOString(),
-        ultimoLogin: new Date().toISOString()
+        permissions: resolvedPermissions,
+        dataCriacao: data?.created_at || currentUserRef.current?.dataCriacao || new Date().toISOString(),
+        ultimoLogin: currentUserRef.current?.ultimoLogin || new Date().toISOString()
       };
+
+      // VERIFICAÇÃO DE IGUALDADE: Se nenhum campo crítico mudou, não dispara re-render!
+      const current = currentUserRef.current;
+      if (
+        current &&
+        current.id === userToSet.id &&
+        current.email === userToSet.email &&
+        current.perfil === userToSet.perfil &&
+        current.status === userToSet.status &&
+        current.nome === userToSet.nome &&
+        current.commission_percentage === userToSet.commission_percentage &&
+        JSON.stringify(current.permissions) === JSON.stringify(userToSet.permissions)
+      ) {
+        return;
+      }
 
       setCurrentUser(userToSet);
       try {
@@ -124,8 +164,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     } catch (err) {
       console.error('Error fetching profile, using fallback:', err);
-      if (fallbackEmail || currentUser?.email) {
-        const targetEmail = fallbackEmail || currentUser?.email || '';
+      if (fallbackEmail || currentUserRef.current?.email) {
+        const targetEmail = fallbackEmail || currentUserRef.current?.email || '';
         const isSuperAdminFallback = targetEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
           targetEmail.toLowerCase().includes('caique') ||
           targetEmail.toLowerCase() === 'caique@cmcred.com.br';
@@ -147,13 +187,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           dataCriacao: new Date().toISOString(),
           ultimoLogin: new Date().toISOString()
         };
-        setCurrentUser(fallbackUser);
-        try {
-          localStorage.setItem(CACHED_USER_KEY, JSON.stringify(fallbackUser));
-        } catch {}
+
+        const current = currentUserRef.current;
+        if (
+          !current ||
+          current.id !== fallbackUser.id ||
+          current.email !== fallbackUser.email ||
+          current.perfil !== fallbackUser.perfil
+        ) {
+          setCurrentUser(fallbackUser);
+          try {
+            localStorage.setItem(CACHED_USER_KEY, JSON.stringify(fallbackUser));
+          } catch {}
+        }
       }
+    } finally {
+      inFlightProfileRef.current = null;
     }
-  }, [currentUser?.email]);
+  }, []); // Totalmente estável sem dependências mutáveis
 
   useEffect(() => {
     let isMounted = true;
@@ -164,11 +215,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 600);
 
     // Check active session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session: initialSession } }) => {
       if (!isMounted) return;
-      setSession(session);
-      if (session?.user?.id) {
-        await fetchProfile(session.user.id, session.user.email);
+      setSession(initialSession);
+      activeSessionUserIdRef.current = initialSession?.user?.id || null;
+      if (initialSession?.user?.id) {
+        await fetchProfile(initialSession.user.id, initialSession.user.email);
       }
       setIsLoading(false);
     }).catch(err => {
@@ -180,21 +232,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       if (!isMounted) return;
 
+      activeSessionUserIdRef.current = newSession?.user?.id || null;
       if (newSession?.user?.id) {
         setSession(newSession);
         await fetchProfile(newSession.user.id, newSession.user.email);
       } else if (_event === 'SIGNED_OUT') {
-        // Apenas limpa a sessão se o logout foi explicitamente solicitado pelo usuário
         if (isExplicitLogoutRef.current) {
           setSession(null);
           setCurrentUser(null);
+          activeSessionUserIdRef.current = null;
           try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
         } else {
-          // Evento transiente de sincronização/troca de abas do navegador: tenta recuperar a sessão ativa
           try {
             const { data: currentSess } = await supabase.auth.getSession();
             if (currentSess?.session?.user) {
               setSession(currentSess.session);
+              activeSessionUserIdRef.current = currentSess.session.user.id;
               await fetchProfile(currentSess.session.user.id, currentSess.session.user.email);
             }
           } catch (e) {
@@ -205,14 +258,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     });
 
-    // Sincronização em tempo real de permissões e perfil
+    // Sincronização em tempo real de permissões e perfil (apenas para o usuário logado)
     const profileChannel = supabase
       .channel('realtime-auth-profile-sync')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles' },
-        () => {
-          if (isMounted) {
+        (payload: any) => {
+          if (!isMounted) return;
+          const currentUserId = activeSessionUserIdRef.current;
+          const changedId = payload.new?.id || payload.old?.id;
+          // Ignora alterações em perfis de outros usuários
+          if (changedId && currentUserId && changedId !== currentUserId) {
+            return;
+          }
+          if (currentUserId) {
             supabase.auth.getSession().then(({ data }) => {
               if (data?.session?.user) {
                 fetchProfile(data.session.user.id, data.session.user.email);
@@ -230,16 +290,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const { data: { session: activeSession } } = await supabase.auth.getSession();
           if (activeSession?.user) {
             setSession(activeSession);
-            // Verifica se o token JWT está expirado ou perto de expirar (menos de 5 minutos)
+            activeSessionUserIdRef.current = activeSession.user.id;
             const expiresAt = activeSession.expires_at || 0;
             const nowSec = Math.floor(Date.now() / 1000);
             if (expiresAt - nowSec < 300) {
               const { data: refreshed } = await supabase.auth.refreshSession();
-              if (refreshed?.session) {
+              if (refreshed?.session?.user) {
                 setSession(refreshed.session);
+                activeSessionUserIdRef.current = refreshed.session.user.id;
                 await fetchProfile(refreshed.session.user.id, refreshed.session.user.email);
               }
-            } else if (!currentUser) {
+            } else if (!currentUserRef.current) {
               await fetchProfile(activeSession.user.id, activeSession.user.email);
             }
           }
@@ -260,7 +321,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       subscription.unsubscribe();
       supabase.removeChannel(profileChannel);
     };
-  }, [fetchProfile, currentUser]);
+  }, [fetchProfile]);
 
   const login = useCallback(async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();

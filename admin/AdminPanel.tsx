@@ -108,7 +108,7 @@ const AdminApp: React.FC = () => {
         window.history.replaceState(null, '', targetPath);
       }
     }
-  }, [currentUser]);
+  }, [currentUser?.perfil]);
 
   if (isLoading) {
     return (
