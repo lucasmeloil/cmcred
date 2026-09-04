@@ -1,14 +1,14 @@
 import React from 'react';
-import { 
-  Users, 
-  RefreshCw, 
-  TrendingUp, 
-  HeartHandshake, 
-  MapPin, 
-  Phone, 
-  MessageCircle, 
-  Building2, 
-  BadgeCheck 
+import {
+  Users,
+  RefreshCw,
+  TrendingUp,
+  HeartHandshake,
+  MapPin,
+  Phone,
+  MessageCircle,
+  Building2,
+  BadgeCheck
 } from 'lucide-react';
 
 const CompanyServices: React.FC = () => {
@@ -16,7 +16,7 @@ const CompanyServices: React.FC = () => {
     {
       id: 'cartao',
       title: 'Troca de Limite por Dinheiro',
-      description: 'Transforme o limite do seu cartão de crédito em dinheiro na sua conta via PIX em até 18x.',
+      description: 'Transforme o limite do seu cartão de crédito em dinheiro na sua conta via PIX em até 21x.',
       icon: <TrendingUp size={28} className="text-amber-400" />,
       badge: 'Na Hora via PIX'
     },
@@ -50,7 +50,7 @@ const CompanyServices: React.FC = () => {
       <div className="absolute bottom-10 right-0 w-96 h-96 bg-yellow-500/10 rounded-full blur-[140px] pointer-events-none" />
 
       <div className="container mx-auto px-4 md:px-8 relative z-10">
-        
+
         {/* Section Header */}
         <div className="text-center max-w-3xl mx-auto mb-16">
           <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 px-4 py-1.5 rounded-full text-amber-300 text-xs font-black uppercase tracking-widest mb-4 backdrop-blur-sm shadow-[0_0_15px_rgba(245,158,11,0.2)]">
@@ -69,16 +69,16 @@ const CompanyServices: React.FC = () => {
 
         {/* Content Grid: Facade Showcase + Core Service Cards */}
         <div className="grid lg:grid-cols-12 gap-8 items-center max-w-6xl mx-auto mb-16">
-          
+
           {/* Left Column: Official Transparent Logo Card */}
           <div className="lg:col-span-5 relative group">
             <div className="absolute -inset-1 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 rounded-3xl blur opacity-30 group-hover:opacity-60 transition duration-500"></div>
             <div className="relative rounded-3xl overflow-hidden border border-amber-500/30 bg-black-950 p-8 shadow-2xl flex flex-col items-center justify-center text-center">
               <div className="relative w-full max-w-[280px] flex items-center justify-center mb-6 py-4">
                 <div className="absolute inset-0 bg-amber-500/20 rounded-full blur-2xl"></div>
-                <img 
-                  src="/cmcred-logo.png" 
-                  alt="CMCred Soluções Financeiras" 
+                <img
+                  src="/cmcred-logo.png"
+                  alt="CMCred Soluções Financeiras"
                   className="w-full h-auto object-contain drop-shadow-[0_0_25px_rgba(245,158,11,0.5)] transition-transform duration-500 group-hover:scale-105"
                 />
               </div>
@@ -102,7 +102,7 @@ const CompanyServices: React.FC = () => {
           {/* Right Column: 4 Featured Services */}
           <div className="lg:col-span-7 grid sm:grid-cols-2 gap-4">
             {services.map((item) => (
-              <div 
+              <div
                 key={item.id}
                 className="bg-black-900/90 hover:bg-black-850 border border-amber-500/20 hover:border-amber-500/50 p-6 rounded-2xl transition-all duration-300 hover:-translate-y-1 group relative overflow-hidden shadow-lg flex flex-col justify-between"
               >
@@ -119,13 +119,13 @@ const CompanyServices: React.FC = () => {
                   <h3 className="text-base font-orbitron font-bold text-white mb-2 group-hover:text-amber-400 transition-colors">
                     {item.title}
                   </h3>
-                  
+
                   <p className="text-gray-400 text-xs leading-relaxed mb-4">
                     {item.description}
                   </p>
                 </div>
 
-                <a 
+                <a
                   href={`https://wa.me/5579998627907?text=${encodeURIComponent(`Olá! Gostaria de mais informações sobre ${item.title} na CM CRED.`)}`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -151,7 +151,7 @@ const CompanyServices: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 w-full md:w-auto">
-            <a 
+            <a
               href="https://wa.me/5579998627907"
               target="_blank"
               rel="noopener noreferrer"

@@ -23,7 +23,7 @@ const steps = [
   {
     id: 4,
     icon: <CheckSquare size={36} />,
-    title: 'Pague em até 18x',
+    title: 'Pague em até 21x',
     description: 'A fatura chega depois, parcelada com total controle e comodidade.'
   }
 ];
@@ -43,7 +43,7 @@ const HowItWorks: React.FC = () => {
 
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {steps.map((step) => (
-            <div 
+            <div
               key={step.id}
               className="group relative bg-black-850/70 border border-amber-500/15 p-8 rounded-3xl hover:border-amber-500/50 transition-all duration-300 hover:-translate-y-2 shadow-xl"
             >
