@@ -30,22 +30,10 @@ const tipoConfig: Record<string, { icon: React.ReactNode; color: string }> = {
 
 const LoanRequests: React.FC = () => {
   const { currentUser, authUserEmail, addNotification, logAudit, showConfirm } = useAuth();
-  const [loans, setLoans] = useState<LoanRequest[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_loans_list');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
+  const [loans, setLoans] = useState<LoanRequest[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_loans_list');
-      if (cached) return false;
-    } catch {}
-    return true;
-  });
+  const [loading, setLoading] = useState(true);
   const [editingMessage, setEditingMessage] = useState('');
   
   const defaultMessages = [
@@ -94,18 +82,23 @@ const LoanRequests: React.FC = () => {
         } catch {}
       }
 
-      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
-        const mapped = rawLoans.map((l: any) => ({
-          ...l,
-          lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
-          lead_phone: l.customers?.phone || l.leads?.phone || '',
-          bank_name: l.banks?.name || 'Banco Geral',
-          machine_name: l.machines?.name || 'Stone Smart POS',
-          consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
-        }));
-        setLoans(mapped);
-        try { sessionStorage.setItem('cmcred_cache_loans_list', JSON.stringify(mapped)); } catch {}
+      if (loansRes.error) {
+        console.warn('Aviso ao consultar loans:', loansRes.error.message);
+        if (hasLoadedOnceRef.current) return;
       }
+      if (rawLoans.length === 0 && hasLoadedOnceRef.current && loans.length > 0 && isSilent) {
+        return;
+      }
+
+      const mapped = rawLoans.map((l: any) => ({
+        ...l,
+        lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
+        lead_phone: l.customers?.phone || l.leads?.phone || '',
+        bank_name: l.banks?.name || 'Banco Geral',
+        machine_name: l.machines?.name || 'Stone Smart POS',
+        consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
+      }));
+      setLoans(mapped);
 
       let rawBanks = banksRes.data || [];
       if (rawBanks.length === 0) {

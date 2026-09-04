@@ -112,49 +112,31 @@ const Dashboard: React.FC = () => {
                   currentUser?.perfil === 'admin';
   const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
 
-  const [stats, setStats] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_dashboard_stats');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return {
-      totalPIX: 0,
-      totalProfit: 0,
-      totalGrossProfit: 0,
-      totalApproved: 0,
-      totalCommission: 0,
-      totalMachineFees: 0,
-      averageTicket: 0,
-      activeOperations: 0,
-      availableCash: 0,
-      pendingReceivables: 0,
-      conversionRate: 0,
-      averageInterestRate: 0,
-      pendingOperationsCount: 0,
-      bankStats: [] as { name: string; value: number }[],
-      machineStats: [] as { name: string; value: number }[],
-      installmentStats: [] as { name: string; value: number }[],
-      consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
-      evolutionStats: [] as { date: string; volume: number; lucro: number }[],
-      monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
-    };
+  const [stats, setStats] = useState({
+    totalPIX: 0,
+    totalProfit: 0,
+    totalGrossProfit: 0,
+    totalApproved: 0,
+    totalCommission: 0,
+    totalMachineFees: 0,
+    averageTicket: 0,
+    activeOperations: 0,
+    availableCash: 0,
+    pendingReceivables: 0,
+    conversionRate: 0,
+    averageInterestRate: 0,
+    pendingOperationsCount: 0,
+    bankStats: [] as { name: string; value: number }[],
+    machineStats: [] as { name: string; value: number }[],
+    installmentStats: [] as { name: string; value: number }[],
+    consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
+    evolutionStats: [] as { date: string; volume: number; lucro: number }[],
+    monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
   });
-  const [recentLoans, setRecentLoans] = useState<any[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_dashboard_loans');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_dashboard_stats');
-      if (cached) return false;
-    } catch {}
-    return true;
-  });
+  const [recentLoans, setRecentLoans] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'vendas' | 'operacoes'>('vendas');
-  const hasLoadedOnceRef = useRef(recentLoans.length > 0);
+  const hasLoadedOnceRef = useRef(false);
 
   const myOperations = useMemo(() => {
     return recentLoans.filter(l => {
@@ -194,8 +176,12 @@ const Dashboard: React.FC = () => {
         } catch {}
       }
 
-      // Previne sobrescrita acidental com array vazio ao voltar de aba
-      if (loans.length === 0 && recentLoans.length > 0 && hasLoadedOnceRef.current) {
+      // Se houver erro na revalidação de background, não sobrescreve os dados existentes com zero
+      if (loansRes.error) {
+        console.warn('Aviso ao consultar loans no dashboard:', loansRes.error.message);
+        if (hasLoadedOnceRef.current) return;
+      }
+      if (loans.length === 0 && hasLoadedOnceRef.current && recentLoans.length > 0 && isSilent) {
         return;
       }
 
@@ -205,7 +191,6 @@ const Dashboard: React.FC = () => {
         consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
       }));
       setRecentLoans(mappedRecent);
-      try { sessionStorage.setItem('cmcred_cache_dashboard_loans', JSON.stringify(mappedRecent)); } catch {}
 
       let totalPIX = 0;
       let totalApproved = 0;
@@ -385,7 +370,6 @@ const Dashboard: React.FC = () => {
         monthlyStats: last12Months
       };
       setStats(computedStats);
-      try { sessionStorage.setItem('cmcred_cache_dashboard_stats', JSON.stringify(computedStats)); } catch {}
       hasLoadedOnceRef.current = true;
     } catch (error) {
       console.error('Erro ao processar dados estratégicos:', error);
@@ -402,12 +386,26 @@ const Dashboard: React.FC = () => {
 
     fetchData();
 
-    // Sincronização em tempo real via Supabase Realtime Channels
+    // Sincronização em tempo real via Supabase Realtime Channels (loans, finance, customers)
     const channel = supabase
-      .channel('dashboard-realtime-loans')
+      .channel('dashboard-realtime-all')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'loans' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'finance' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
         () => {
           fetchData(true);
         }

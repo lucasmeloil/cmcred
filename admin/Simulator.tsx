@@ -18,6 +18,7 @@ import {
   Copy,
   Check
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 import {
   getCustomCardFlags,
@@ -61,13 +62,27 @@ const Simulator: React.FC = () => {
     };
     window.addEventListener('cmcred_rates_updated', handleUpdate);
     window.addEventListener('cmcred_flags_updated', handleUpdate);
-    window.addEventListener('cmcred_rates_updated', handleUpdate);
-    window.addEventListener('cmcred_flags_updated', handleUpdate);
+
+    const channel = supabase
+      .channel('simulator-rates-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'simulator_rates' },
+        () => {
+          fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
+            if (dbFlags && dbFlags.length > 0) {
+              setFlags(dbFlags);
+            }
+            setRatesVersion(v => v + 1);
+          });
+        }
+      )
+      .subscribe();
+
     return () => {
       window.removeEventListener('cmcred_rates_updated', handleUpdate);
       window.removeEventListener('cmcred_flags_updated', handleUpdate);
-      window.removeEventListener('cmcred_rates_updated', handleUpdate);
-      window.removeEventListener('cmcred_flags_updated', handleUpdate);
+      supabase.removeChannel(channel);
     };
   }, []);
 

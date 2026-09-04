@@ -121,7 +121,13 @@ export interface Customer {
   email: string;
   pix_key?: string;
   birth_date?: string;
+  cep?: string;
   address?: string;
+  address_number?: string;
+  complement?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
   status: 'active' | 'inactive';
   person_type: 'customer' | 'employee' | 'admin';
   notes?: string;

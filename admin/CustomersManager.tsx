@@ -26,20 +26,8 @@ import { useAutoRefresh } from '../lib/useAutoRefresh';
 
 const CustomersManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm } = useAuth();
-  const [customers, setCustomers] = useState<Customer[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_customers');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_customers');
-      if (cached) return false;
-    } catch {}
-    return true;
-  });
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -77,10 +65,7 @@ const CustomersManager: React.FC = () => {
         if (adminRes.data && adminRes.data.length > 0) list = adminRes.data;
       }
 
-      if (list.length > 0 || !hasLoadedOnceRef.current) {
-        setCustomers(list);
-        try { sessionStorage.setItem('cmcred_cache_customers', JSON.stringify(list)); } catch {}
-      }
+      setCustomers(list);
       hasLoadedOnceRef.current = true;
     } catch (err) {
       console.error('Erro ao buscar clientes:', err);

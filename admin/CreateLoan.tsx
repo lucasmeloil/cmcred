@@ -71,25 +71,41 @@ const CreateLoan: React.FC = () => {
   // Taxa customizada da maquininha (se o operador desejar ajustar manualmente)
   const [customMachineFeeRate, setCustomMachineFeeRate] = useState<number | null>(null);
 
-  const [formData, setFormData] = useState({
-    customer_id: '' as string,
-    lead_id: '' as string,
-    manual_name: '',
-    manual_cpf: '',
-    manual_phone: '',
-    pix_key: '',
-    pix_key_type: 'CPF' as 'CPF' | 'Telefone' | 'E-mail' | 'Aleatória' | 'Chave/Conta',
-    card_last_digits: '',
-    card_flag_id: 'VISA_MASTER',
-    machine_id: '' as string,
-    machine_name: 'Stone Smart POS' as string,
-    channel: 'Presencial (Máquina Balcão)' as string,
-    requested_amount: 1800,
-    installments: 8, // Quantidade de vezes (1 a 18x)
-    interest_rate: 11.75,
-    consultant_id: '' as string | null,
-    observations: ''
+  const [formData, setFormData] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cmcred_create_loan_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {}
+    return {
+      customer_id: '' as string,
+      lead_id: '' as string,
+      manual_name: '',
+      manual_cpf: '',
+      manual_phone: '',
+      pix_key: '',
+      pix_key_type: 'CPF' as 'CPF' | 'Telefone' | 'E-mail' | 'Aleatória' | 'Chave/Conta',
+      card_last_digits: '',
+      card_flag_id: 'VISA_MASTER',
+      machine_id: '' as string,
+      machine_name: 'Stone Smart POS' as string,
+      channel: 'Presencial (Máquina Balcão)' as string,
+      requested_amount: 1800,
+      installments: 8, // Quantidade de vezes (1 a 18x)
+      interest_rate: 11.75,
+      consultant_id: '' as string | null,
+      observations: ''
+    };
   });
+
+  // Salvar rascunho automaticamente para nunca perder dados ao trocar de tela
+  useEffect(() => {
+    try {
+      localStorage.setItem('cmcred_create_loan_draft', JSON.stringify(formData));
+    } catch {}
+  }, [formData]);
 
   const fetchData = async () => {
     try {
@@ -103,23 +119,29 @@ const CreateLoan: React.FC = () => {
       if (leadsRes.data) setLeads(leadsRes.data);
       if (customersRes.data) {
         setCustomers(customersRes.data);
-        if (!formData.customer_id && customersRes.data.length > 0) {
-          setFormData(prev => ({
-            ...prev,
-            customer_id: customersRes.data[0].id.toString(),
-            pix_key: customersRes.data[0].pix_key || customersRes.data[0].cpf || ''
-          }));
-        }
+        setFormData(prev => {
+          if (!prev.customer_id && customersRes.data.length > 0) {
+            return {
+              ...prev,
+              customer_id: customersRes.data[0].id.toString(),
+              pix_key: prev.pix_key || customersRes.data[0].pix_key || customersRes.data[0].cpf || ''
+            };
+          }
+          return prev;
+        });
       }
       if (machinesRes.data && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);
-        if (!formData.machine_id) {
-          setFormData(prev => ({
-            ...prev,
-            machine_id: machinesRes.data[0].id.toString(),
-            machine_name: machinesRes.data[0].name
-          }));
-        }
+        setFormData(prev => {
+          if (!prev.machine_id) {
+            return {
+              ...prev,
+              machine_id: machinesRes.data[0].id.toString(),
+              machine_name: machinesRes.data[0].name
+            };
+          }
+          return prev;
+        });
       } else {
         // Opções padrão
         const defaultMachines = [
@@ -132,9 +154,12 @@ const CreateLoan: React.FC = () => {
           { id: 7, name: 'Mercado Pago Point Pro' }
         ];
         setMachines(defaultMachines);
-        if (!formData.machine_id) {
-          setFormData(prev => ({ ...prev, machine_id: '1', machine_name: defaultMachines[0].name }));
-        }
+        setFormData(prev => {
+          if (!prev.machine_id) {
+            return { ...prev, machine_id: '1', machine_name: defaultMachines[0].name };
+          }
+          return prev;
+        });
       }
       if (profilesRes.data) setConsultants(profilesRes.data);
 
@@ -153,7 +178,7 @@ const CreateLoan: React.FC = () => {
     fetchData();
 
     if (currentUser && ['consultant', 'operator', 'manager'].includes(currentUser.perfil)) {
-      setFormData(prev => ({ ...prev, consultant_id: currentUser.id }));
+      setFormData(prev => ({ ...prev, consultant_id: prev.consultant_id || currentUser.id }));
     }
 
     const handleRatesUpdate = () => {
@@ -163,13 +188,37 @@ const CreateLoan: React.FC = () => {
     };
     window.addEventListener('cmcred_rates_updated', handleRatesUpdate);
     window.addEventListener('cmcred_flags_updated', handleRatesUpdate);
-    window.addEventListener('cmcred_rates_updated', handleRatesUpdate);
-    window.addEventListener('cmcred_flags_updated', handleRatesUpdate);
+
+    // Sincronização em tempo real via Supabase Realtime Channels
+    const channel = supabase
+      .channel('create-loan-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
+        () => {
+          fetchData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'machines' },
+        () => {
+          fetchData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'simulator_rates' },
+        () => {
+          fetchData();
+        }
+      )
+      .subscribe();
+
     return () => {
       window.removeEventListener('cmcred_rates_updated', handleRatesUpdate);
       window.removeEventListener('cmcred_flags_updated', handleRatesUpdate);
-      window.removeEventListener('cmcred_rates_updated', handleRatesUpdate);
-      window.removeEventListener('cmcred_flags_updated', handleRatesUpdate);
+      supabase.removeChannel(channel);
     };
   }, [currentUser, rateTableType]);
 
@@ -381,6 +430,9 @@ const CreateLoan: React.FC = () => {
       addNotification(`Operação de ${formData.installments}x (${machineLabel}) finalizada para ${personName} com sucesso!`, 'sucesso');
 
       setSuccess(true);
+      try {
+        localStorage.removeItem('cmcred_create_loan_draft');
+      } catch {}
       setFormData(prev => ({
         ...prev,
         manual_name: '',

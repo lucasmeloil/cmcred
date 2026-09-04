@@ -87,6 +87,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, onNavigate }) => {
 
     const perms = (currentUser?.permissions || {}) as any;
 
+    const isConsultant = currentUser?.perfil === 'consultant';
+
     switch (itemId) {
       case 'dashboard': return Boolean(perms.dashboard);
       case 'simulador': return Boolean(perms.simulador ?? true);
@@ -97,8 +99,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, onNavigate }) => {
       case 'taxas_simulador': return Boolean(perms.taxas_simulador || perms.card_flags);
       case 'financeiro': return Boolean(perms.finance || perms.financeiro);
       case 'relatorios': return Boolean(perms.reports || perms.relatorios);
-      case 'usuarios': return Boolean(perms.users || perms.usuarios);
-      case 'logs': return Boolean(perms.audit || perms.logs);
+      case 'usuarios': return !isConsultant && Boolean(perms.users || perms.usuarios);
+      case 'logs': return !isConsultant && Boolean(perms.audit || perms.logs);
       case 'tutoriais': return true;
       default: return false;
     }

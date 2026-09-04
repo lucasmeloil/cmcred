@@ -58,28 +58,10 @@ const ReportsManager: React.FC = () => {
   const { addNotification, logAudit } = useAuth();
   
   // Data State
-  const [loans, setLoans] = useState<any[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_reports_loans');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
-  const [finance, setFinance] = useState<any[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_reports_finance');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
+  const [loans, setLoans] = useState<any[]>([]);
+  const [finance, setFinance] = useState<any[]>([]);
   const [consultants, setConsultants] = useState<any[]>([]);
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_reports_loans');
-      if (cached) return false;
-    } catch {}
-    return true;
-  });
+  const [loading, setLoading] = useState(true);
 
   // Filters State
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('month');
@@ -103,13 +85,11 @@ const ReportsManager: React.FC = () => {
         supabase.from('profiles').select('id, full_name, role')
       ]);
 
-      if (loansRes.data && (loansRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+      if (loansRes.data) {
         setLoans(loansRes.data);
-        try { sessionStorage.setItem('cmcred_cache_reports_loans', JSON.stringify(loansRes.data)); } catch {}
       }
-      if (financeRes.data && (financeRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+      if (financeRes.data) {
         setFinance(financeRes.data);
-        try { sessionStorage.setItem('cmcred_cache_reports_finance', JSON.stringify(financeRes.data)); } catch {}
       }
       if (profilesRes.data) setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
       hasLoadedOnceRef.current = true;
@@ -125,6 +105,29 @@ const ReportsManager: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+
+    // Sincronização em tempo real via Supabase Realtime Channels
+    const channel = supabase
+      .channel('reports-realtime-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'loans' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'finance' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [fetchData]);
 
   // Atualização automática dos relatórios ao alternar de aba (sem F5)

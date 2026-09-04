@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import type { AdminUser, Notification, UserPermissions } from './types';
+import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import {
   SUPER_ADMIN_EMAIL,
-  useInactivityTimeout,
   checkLoginRateLimit,
   recordFailedLogin,
   clearLoginAttempts
@@ -63,20 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isExplicitLogoutRef = React.useRef(false);
 
-  // Auto logout por inatividade (30 minutos) para proteção de dados financeiros sensíveis
-  const handleInactivityLogout = useCallback(() => {
-    if (currentUser) {
-      console.warn('Sessão encerrada por inatividade de 30 minutos (Proteção Financeira CM CRED).');
-      isExplicitLogoutRef.current = true;
-      supabase.auth.signOut();
-      setCurrentUser(null);
-      setSession(null);
-      try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
-      isExplicitLogoutRef.current = false;
-    }
-  }, [currentUser]);
-
-  useInactivityTimeout(handleInactivityLogout);
+  // Sessão persistente ativa sem auto-logout por inatividade (não encerra ao sair da aba)
 
   // Fetch profile when session changes
   const fetchProfile = useCallback(async (userId: string, fallbackEmail?: string) => {
@@ -117,18 +104,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         perfil: (isSuperAdmin || isAdminUser) ? 'admin' : ((data?.role as any) || 'consultant'),
         status: isSuperAdmin ? 'active' : ((data?.status as any) || 'active'),
         commission_percentage: data?.commission_percentage ? Number(data.commission_percentage) : 0,
-        permissions: (isSuperAdmin || isAdminUser) ? allPermissions : (data?.permissions ? {
-          ...data.permissions,
-          finance: true,
-          financeiro: true
-        } : {
-          dashboard: true, create_loan: true, loans: true, delete_loans: false,
-          finance: true, machines: false, card_flags: false, leads: true,
-          customers: true, reports: false, users: false, audit: false,
-          lucros: false, novo_emprestimo: true, solicitacoes: true, financeiro: true,
-          maquininhas: false, taxas_simulador: false, relatorios: false, usuarios: false,
-          logs: false, pessoas: true, simulador: true
-        }),
+        permissions: (isSuperAdmin || isAdminUser) ? allPermissions : (() => {
+          const basePerms = data?.permissions ? { ...DEFAULT_PERMISSIONS, ...data.permissions } : { ...DEFAULT_PERMISSIONS };
+          return {
+            ...basePerms,
+            users: false,
+            usuarios: false,
+            audit: false,
+            logs: false
+          };
+        })(),
         dataCriacao: data?.created_at || new Date().toISOString(),
         ultimoLogin: new Date().toISOString()
       };
@@ -220,12 +205,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     });
 
+    // Sincronização em tempo real de permissões e perfil
+    const profileChannel = supabase
+      .channel('realtime-auth-profile-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          if (isMounted) {
+            supabase.auth.getSession().then(({ data }) => {
+              if (data?.session?.user) {
+                fetchProfile(data.session.user.id, data.session.user.email);
+              }
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // Revalidação proativa de sessão ao retornar para a aba (visibilitychange e focus)
+    const handleVisibilityChange = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && isMounted) {
+        try {
+          const { data: { session: activeSession } } = await supabase.auth.getSession();
+          if (activeSession?.user) {
+            setSession(activeSession);
+            // Verifica se o token JWT está expirado ou perto de expirar (menos de 5 minutos)
+            const expiresAt = activeSession.expires_at || 0;
+            const nowSec = Math.floor(Date.now() / 1000);
+            if (expiresAt - nowSec < 300) {
+              const { data: refreshed } = await supabase.auth.refreshSession();
+              if (refreshed?.session) {
+                setSession(refreshed.session);
+                await fetchProfile(refreshed.session.user.id, refreshed.session.user.email);
+              }
+            } else if (!currentUser) {
+              await fetchProfile(activeSession.user.id, activeSession.user.email);
+            }
+          }
+        } catch (e) {
+          console.warn('Revalidação de sessão no visibilitychange:', e);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
     return () => {
       isMounted = false;
       clearTimeout(safetyTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
       subscription.unsubscribe();
+      supabase.removeChannel(profileChannel);
     };
-  }, [fetchProfile]);
+  }, [fetchProfile, currentUser]);
 
   const login = useCallback(async (email: string, password: string) => {
     const cleanEmail = email.trim().toLowerCase();

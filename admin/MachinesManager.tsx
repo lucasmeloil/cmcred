@@ -66,21 +66,9 @@ const MachinesManager: React.FC = () => {
                   currentUser?.email?.toLowerCase().includes('admin') || 
                   currentUser?.email?.toLowerCase().includes('cmcred');
   
-  const [machines, setMachines] = useState<MachineModel[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_machines');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
+  const [machines, setMachines] = useState<MachineModel[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_machines');
-      if (cached) return false;
-    } catch {}
-    return true;
-  });
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -123,7 +111,7 @@ const MachinesManager: React.FC = () => {
         supabase.from('banks').select('*').order('name', { ascending: true })
       ]);
 
-      if (machRes.data && (machRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+      if (machRes.data) {
         const mapped = machRes.data.map((m: any) => ({
           ...m,
           bank_name: m.banks?.name || 'Banco Geral',
@@ -131,7 +119,6 @@ const MachinesManager: React.FC = () => {
           card_rates: m.installment_fees?.rates_by_flag || (m.installment_fees ? m.installment_fees : DEFAULT_MACHINE_MDR_RATES)
         }));
         setMachines(mapped);
-        try { sessionStorage.setItem('cmcred_cache_machines', JSON.stringify(mapped)); } catch {}
       }
       if (bankRes.data) setBanks(bankRes.data);
       hasLoadedOnceRef.current = true;

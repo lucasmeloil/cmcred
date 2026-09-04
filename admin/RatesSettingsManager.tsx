@@ -131,10 +131,68 @@ const RatesSettingsManager: React.FC = () => {
     }
   };
 
+  const latestRef = React.useRef({ ratesT1, ratesT2, flags, activeTable, hasChanges });
+  useEffect(() => {
+    latestRef.current = { ratesT1, ratesT2, flags, activeTable, hasChanges };
+  }, [ratesT1, ratesT2, flags, activeTable, hasChanges]);
+
   useEffect(() => {
     loadDatabaseRates();
     loadMachines();
+
+    const channel = supabase
+      .channel('rates-settings-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'simulator_rates' },
+        () => {
+          // Apenas recarrega se não tiver alterações locais pendentes
+          if (!latestRef.current.hasChanges) {
+            loadDatabaseRates();
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'machines' },
+        () => {
+          loadMachines();
+        }
+      )
+      .subscribe();
+
+    const onBeforeUnload = () => {
+      if (latestRef.current.hasChanges) {
+        const d = latestRef.current.activeTable === 'tabela_1' ? latestRef.current.ratesT1 : latestRef.current.ratesT2;
+        saveAllRatesToDatabase(d, latestRef.current.flags, latestRef.current.activeTable);
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      supabase.removeChannel(channel);
+      if (latestRef.current.hasChanges) {
+        const d = latestRef.current.activeTable === 'tabela_1' ? latestRef.current.ratesT1 : latestRef.current.ratesT2;
+        saveAllRatesToDatabase(d, latestRef.current.flags, latestRef.current.activeTable);
+      }
+    };
   }, []);
+
+  // Auto-save inteligente: Salva automaticamente no banco Supabase após 2 segundos sem digitação
+  useEffect(() => {
+    if (!hasChanges) return;
+    const timer = setTimeout(() => {
+      const activeData = activeTable === 'tabela_1' ? ratesT1 : ratesT2;
+      saveAllRatesToDatabase(activeData, flags, activeTable).then(res => {
+        if (res.success) {
+          setHasChanges(false);
+          logAudit('edição_taxas', `Taxas (${activeTable}) sincronizadas automaticamente com precisão no banco.`);
+        }
+      });
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [hasChanges, ratesT1, ratesT2, flags, activeTable, logAudit]);
 
   // Alterar taxa individual
   const handleRateChange = (flagKey: string, installment: number, value: number | string) => {

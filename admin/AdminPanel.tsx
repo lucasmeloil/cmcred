@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
+import { DataProvider } from './DataContext';
 import AdminLogin from './AdminLogin';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -159,8 +160,8 @@ const AdminApp: React.FC = () => {
         case 'taxas_simulador': return Boolean(perms.taxas_simulador || perms.card_flags);
         case 'financeiro': return Boolean(perms.finance || perms.financeiro);
         case 'relatorios': return Boolean(perms.reports || perms.relatorios);
-        case 'usuarios': return Boolean(perms.users || perms.usuarios);
-        case 'logs': return Boolean(perms.audit || perms.logs);
+        case 'usuarios': return !isConsultant && Boolean(perms.users || perms.usuarios);
+        case 'logs': return !isConsultant && Boolean(perms.audit || perms.logs);
         case 'tutoriais': return true;
         default: return false;
       }
@@ -347,7 +348,9 @@ const AdminApp: React.FC = () => {
 
 const AdminPanel: React.FC = () => (
   <AuthProvider>
-    <AdminPanelContent />
+    <DataProvider>
+      <AdminPanelContent />
+    </DataProvider>
   </AuthProvider>
 );
 

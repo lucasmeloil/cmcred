@@ -44,28 +44,9 @@ const Financeiro: React.FC = () => {
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 
-  const [data, setData] = useState<FinanceEntry[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_finance_data');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
-  const [loans, setLoans] = useState<LoanRequest[]>(() => {
-    try {
-      const cached = sessionStorage.getItem('cmcred_cache_finance_loans');
-      if (cached) return JSON.parse(cached);
-    } catch {}
-    return [];
-  });
-  const [loading, setLoading] = useState(() => {
-    try {
-      const cachedData = sessionStorage.getItem('cmcred_cache_finance_data');
-      const cachedLoans = sessionStorage.getItem('cmcred_cache_finance_loans');
-      if (cachedData || cachedLoans) return false;
-    } catch {}
-    return true;
-  });
+  const [data, setData] = useState<FinanceEntry[]>([]);
+  const [loans, setLoans] = useState<LoanRequest[]>([]);
+  const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   
   // Modais de cadastro manual
@@ -161,21 +142,24 @@ const Financeiro: React.FC = () => {
         } catch {}
       }
 
+      if (financeRes.error || loansRes.error) {
+        if (financeRes.error) console.warn('Aviso financeiro:', financeRes.error.message);
+        if (loansRes.error) console.warn('Aviso loans:', loansRes.error.message);
+        if (hasLoadedOnceRef.current) return;
+      }
+      if (rawFinance.length === 0 && hasLoadedOnceRef.current && data.length > 0 && isSilent) {
+        return;
+      }
+
       // REGRA DE OURO: Nunca apague dados válidos existentes na tela durante atualização de background
-      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
-        setData(rawFinance);
-        try { sessionStorage.setItem('cmcred_cache_finance_data', JSON.stringify(rawFinance)); } catch {}
-      }
-      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
-        const mappedLoans = rawLoans.map((l: any) => ({
-          ...l,
-          lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
-          bank_name: l.banks?.name,
-          machine_name: l.machines?.name
-        }));
-        setLoans(mappedLoans);
-        try { sessionStorage.setItem('cmcred_cache_finance_loans', JSON.stringify(mappedLoans)); } catch {}
-      }
+      setData(rawFinance);
+      const mappedLoans = rawLoans.map((l: any) => ({
+        ...l,
+        lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
+        bank_name: l.banks?.name,
+        machine_name: l.machines?.name
+      }));
+      setLoans(mappedLoans);
       hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar dados financeiros:', err);
@@ -189,6 +173,29 @@ const Financeiro: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+
+    // Sincronização em tempo real via Supabase Realtime Channels
+    const channel = supabase
+      .channel('finance-realtime-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'finance' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'loans' },
+        () => {
+          fetchData(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [fetchData]);
 
   // Atualização automática a cada 30 segundos e ao alternar de aba (sem F5 e sem piscar a tela)
