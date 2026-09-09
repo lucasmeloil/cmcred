@@ -8,10 +8,11 @@ import {
 import { useAuth } from './AuthContext';
 import type { Customer } from './types';
 import { validatePixKey, PixValidationResult } from '../lib/pixValidator';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const PeopleManager: React.FC = () => {
-  const { addNotification, logAudit, showConfirm } = useAuth();
+  const { addNotification, logAudit, showConfirm, isSuperAdmin, canDeleteRecords } = useAuth();
   const [people, setPeople] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -87,28 +88,12 @@ const PeopleManager: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    fetchPeople();
-
-    // Sincronização em tempo real do banco de dados Supabase
-    const channel = supabase
-      .channel('realtime-customers-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
-        () => {
-          fetchPeople(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchPeople]);
-
-  // Atualização automática em tempo real a cada 30 segundos
-  useAutoRefresh(fetchPeople, 30000);
+  // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    table: 'customers',
+    onDataChange: fetchPeople,
+    heartbeatIntervalMs: 45000,
+  });
 
   const formatCep = (value: string) => {
     const raw = value.replace(/\D/g, '').slice(0, 8);
@@ -322,6 +307,10 @@ const PeopleManager: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
+    if (!isSuperAdmin && !canDeleteRecords) {
+      addNotification('Permissão negada: apenas administradores possuem privilégio para excluir cadastros de clientes.', 'alerta');
+      return;
+    }
     const confirmed = await showConfirm('Tem certeza que deseja excluir este cadastro? Esta ação não pode ser desfeita.');
     if (!confirmed) return;
     
@@ -422,13 +411,16 @@ const PeopleManager: React.FC = () => {
   return (
     <div style={{ padding: isMobile ? '1.25rem' : '2.5rem' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '2.5rem' }}>
-        <div>
-          <h1 style={{ color: '#0f172a', fontSize: isMobile ? '1.5rem' : '2rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Users size={isMobile ? 26 : 32} color="#d97706" /> Gestão de Clientes & Pessoas
-          </h1>
-          <p style={{ color: '#64748b', marginTop: '0.5rem', fontWeight: 500, fontSize: isMobile ? '0.85rem' : '0.95rem' }}>
-            Administre a base de clientes com endereço completo integrado à API de CEP e Chave Pix validada para repasses.
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ color: '#0f172a', fontSize: isMobile ? '1.5rem' : '2rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Users size={isMobile ? 26 : 32} color="#d97706" /> Gestão de Clientes & Pessoas
+            </h1>
+            <p style={{ color: '#64748b', marginTop: '0.5rem', fontWeight: 500, fontSize: isMobile ? '0.85rem' : '0.95rem' }}>
+              Administre a base de clientes com endereço completo integrado à API de CEP e Chave Pix validada para repasses.
+            </p>
+          </div>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
         </div>
         <button 
           className="action-button"
@@ -579,13 +571,15 @@ const PeopleManager: React.FC = () => {
                         >
                           <Edit2 size={16} />
                         </button>
-                        <button 
-                          onClick={() => handleDelete(p.id)}
-                          title="Excluir"
-                          style={{ background: '#fff', border: '1px solid #fee2e2', color: '#ef4444', padding: '0.5rem', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.2s' }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        {(isSuperAdmin || canDeleteRecords) && (
+                          <button 
+                            onClick={() => handleDelete(p.id)}
+                            title="Excluir"
+                            style={{ background: '#fff', border: '1px solid #fee2e2', color: '#ef4444', padding: '0.5rem', borderRadius: '10px', cursor: 'pointer', transition: 'all 0.2s' }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

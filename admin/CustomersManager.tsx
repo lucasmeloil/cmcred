@@ -22,7 +22,8 @@ import {
 } from 'lucide-react';
 import type { Customer } from './types';
 import { validatePixKey } from '../lib/pixValidator';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const CustomersManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm } = useAuth();
@@ -74,28 +75,12 @@ const CustomersManager: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    fetchCustomers();
-
-    // Sincronização em tempo real via Supabase Realtime Channels
-    const channel = supabase
-      .channel('realtime-customers-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
-        () => {
-          fetchCustomers(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchCustomers]);
-
-  // Auto-refresh a cada 30 segundos e ao retornar para a aba (sem necessidade de F5)
-  useAutoRefresh(fetchCustomers, 30000);
+  // Sincronização em tempo real inteligente com Auto-Heal e re-fetch
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    table: 'customers',
+    onDataChange: () => fetchCustomers(true),
+    heartbeatIntervalMs: 45000,
+  });
 
   // Validação em tempo real da Chave PIX
   const pixValidation = useMemo(() => {
@@ -258,9 +243,12 @@ const CustomersManager: React.FC = () => {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2.5rem' }}>
         <div>
-          <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Users size={34} color="#d97706" /> Gestão de Clientes & Base PIX
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Users size={34} color="#d97706" /> Gestão de Clientes & Base PIX
+            </h1>
+            <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+          </div>
           <p style={{ color: '#64748b', fontSize: '1rem', marginTop: '0.4rem', fontWeight: 500 }}>
             Base oficial de clientes com validação obrigatória de Chave PIX e auto-preenchimento no lançamento de crédito
           </p>

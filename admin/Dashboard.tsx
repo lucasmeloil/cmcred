@@ -26,7 +26,8 @@ import {
 } from 'lucide-react';
 import { calculateLoanFinancials } from '../lib/rates';
 import { useAuth } from './AuthContext';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const StatCard: React.FC<{
   icon: React.ReactNode; label: string; value: string | number;
@@ -153,8 +154,12 @@ const Dashboard: React.FC = () => {
       setLoading(true);
     }
     try {
-      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
+      // Carrega operações respeitando o escopo de dados: Admin vê geral, Consultor vê apenas as suas
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+
+      if (!isAdmin && currentUser?.id) {
+        loansQuery = loansQuery.eq('consultant_id', currentUser.id);
+      }
 
       const [loansRes, leadsRes, customersRes, financeRes] = await Promise.all([
         loansQuery,
@@ -169,11 +174,20 @@ const Dashboard: React.FC = () => {
       // Fallback resiliente com supabaseAdmin para garantir dados tanto para Admin quanto para Consultor
       if ((loans.length === 0 || loansRes.error) && supabaseAdmin) {
         try {
-          const fallbackRes = await supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+          let fbQuery = supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+          if (!isAdmin && currentUser?.id) {
+            fbQuery = fbQuery.eq('consultant_id', currentUser.id);
+          }
+          const fallbackRes = await fbQuery;
           if (fallbackRes.data && fallbackRes.data.length > 0) {
             loans = fallbackRes.data;
           }
         } catch {}
+      }
+
+      // Escopo estrito para consultor
+      if (!isAdmin && currentUser?.id) {
+        loans = loans.filter((l: any) => l.consultant_id === currentUser.id);
       }
 
       // Se houver erro ou retorno vazio na revalidação de background, NUNCA sobrescreve os dados existentes com zero
@@ -374,49 +388,12 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    let isMounted = true;
-    const timer = setTimeout(() => {
-      if (isMounted) setLoading(false);
-    }, 1000);
-
-    fetchData();
-
-    // Sincronização em tempo real via Supabase Realtime Channels (loans, finance, customers)
-    const channel = supabase
-      .channel('dashboard-realtime-all')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loans' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'finance' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [isAdmin, isConsultant, currentUser?.id, currentUser?.email]);
-
-  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
-  useAutoRefresh(fetchData, 30000);
+  // Sincronização em tempo real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['loans', 'finance', 'customers'],
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000,
+  });
 
   const COLORS = ['#d97706', '#2563eb', '#f59e0b', '#7c3aed', '#ec4899', '#06b6d4'];
   const GRADIENT_COLORS = ['#d97706', '#f59e0b', '#b45309', '#8b5cf6'];
@@ -465,10 +442,7 @@ const Dashboard: React.FC = () => {
             Auditoria estratégica do fluxo de troca de limite de cartão por dinheiro.
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: '#fffbeb', border: '1px solid #fde68a', color: '#b45309', padding: '6px 14px', borderRadius: '100px', fontSize: '0.75rem', fontWeight: 800 }}>
-          <span style={{ width: '8px', height: '8px', background: '#d97706', borderRadius: '50%', display: 'inline-block', animation: 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite' }} />
-          SISTEMA ONLINE & AUDITADO
-        </div>
+        <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
       </header>
 
       {/* Abas Personalizadas para Perfil Consultor */}

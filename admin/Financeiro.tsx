@@ -33,7 +33,8 @@ import {
 import { useAuth } from './AuthContext';
 import type { FinanceEntry, LoanRequest } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
 
 const Financeiro: React.FC = () => {
@@ -175,35 +176,12 @@ const Financeiro: React.FC = () => {
     }
   }, [dateRange, customRange, isSuperAdmin, currentUser?.id, addNotification]);
 
-  useEffect(() => {
-    fetchData();
-
-    // Sincronização em tempo real via Supabase Realtime Channels
-    const channel = supabase
-      .channel('finance-realtime-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'finance' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loans' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchData]);
-
-  // Atualização automática a cada 30 segundos e ao alternar de aba (sem F5 e sem piscar a tela)
-  useAutoRefresh(fetchData, 30000);
+  // Sincronização em tempo real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['finance', 'loans'],
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000,
+  });
 
   // Sincronizar empréstimos com a tabela financeira
   // Garante que cada empréstimo tenha registrado o repasse PIX (a pagar/pago) e a entrada do cartão (a receber/recebido)
@@ -699,14 +677,17 @@ const Financeiro: React.FC = () => {
       {/* CABEÇALHO PRINCIPAL COM IDENTIDADE CM CRED */}
       {/* ========================================================================= */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1.25rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '1.5rem' }}>
-        <div>
-          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '2.1rem', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem', letterSpacing: '-0.5px' }}>
-            <Landmark size={32} color="#d97706" /> 
-            Controle Financeiro & Empréstimos
-          </h1>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.4rem', fontWeight: 600 }}>
-            Gestão integrada de fluxo de caixa, contas a pagar e receber, liquidação de maquininhas e inteligência operacional
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+          <div>
+            <h1 style={{ margin: 0, color: '#0f172a', fontSize: '2.1rem', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem', letterSpacing: '-0.5px' }}>
+              <Landmark size={32} color="#d97706" /> 
+              Controle Financeiro & Empréstimos
+            </h1>
+            <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.4rem', fontWeight: 600 }}>
+              Gestão integrada de fluxo de caixa, contas a pagar e receber, liquidação de maquininhas e inteligência operacional
+            </p>
+          </div>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
         </div>
 
         {/* Filtros Globais de Período */}

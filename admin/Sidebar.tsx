@@ -48,7 +48,7 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ activeSection, onNavigate }) => {
-  const { currentUser, sidebarOpen, toggleSidebar, logout } = useAuth();
+  const { currentUser, sidebarOpen, toggleSidebar, logout, canAccessSection } = useAuth();
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -74,39 +74,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeSection, onNavigate }) => {
     operator: 'Operador' 
   };
 
-  const canAccess = (itemId: string): boolean => {
-    // Se ainda estiver carregando currentUser, mostra tudo para Super Admin
-    if (!currentUser) return true;
-
-    const email = currentUser?.email?.toLowerCase() || '';
-    const isSuperAdmin = email === 'caique@cmcred.com.br' ||
-                         email.includes('caique') ||
-                         email.includes('admin') ||
-                         currentUser?.perfil === 'admin';
-    if (isSuperAdmin) return true;
-
-    const perms = (currentUser?.permissions || {}) as any;
-
-    const isConsultant = currentUser?.perfil === 'consultant';
-
-    switch (itemId) {
-      case 'dashboard': return Boolean(perms.dashboard);
-      case 'simulador': return Boolean(perms.simulador ?? true);
-      case 'novo_emprestimo': return Boolean(perms.create_loan || perms.novo_emprestimo);
-      case 'pessoas': return Boolean(perms.customers || perms.pessoas);
-      case 'solicitacoes': return Boolean(perms.loans || perms.solicitacoes);
-      case 'maquininhas': return Boolean(perms.machines || perms.maquininhas);
-      case 'taxas_simulador': return Boolean(perms.taxas_simulador || perms.card_flags);
-      case 'financeiro': return Boolean(perms.finance || perms.financeiro);
-      case 'relatorios': return Boolean(perms.reports || perms.relatorios);
-      case 'usuarios': return !isConsultant && Boolean(perms.users || perms.usuarios);
-      case 'logs': return !isConsultant && Boolean(perms.audit || perms.logs);
-      case 'tutoriais': return true;
-      default: return false;
-    }
-  };
-
-  const filteredNavItems = NAV_ITEMS.filter(item => canAccess(item.id));
+  const filteredNavItems = NAV_ITEMS.filter(item => canAccessSection(item.id));
 
   return (
     <>

@@ -25,6 +25,16 @@ interface AuthContextType {
   addNotification: (mensagem: string, tipo?: 'info' | 'sucesso' | 'alerta' | 'lead' | 'solicitacao') => void;
   authUserEmail: string | null;
   showConfirm: (message: string) => Promise<boolean>;
+  isSuperAdmin: boolean;
+  isConsultant: boolean;
+  canAccessSection: (sectionId: string) => boolean;
+  hasPermission: (permission: keyof UserPermissions) => boolean;
+  canApproveLoans: boolean;
+  canDeleteLoans: boolean;
+  canManageMachines: boolean;
+  canEditRates: boolean;
+  canDeleteRecords: boolean;
+  canManageUsers: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -430,6 +440,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [confirmState]);
 
+  const emailLower = (currentUser?.email || session?.user?.email || '').toLowerCase();
+  const isSuperAdmin = emailLower === 'caique@cmcred.com.br' ||
+                       emailLower.includes('caique') ||
+                       emailLower.startsWith('admin@') ||
+                       currentUser?.perfil === 'admin';
+  const isConsultant = !isSuperAdmin && currentUser?.perfil === 'consultant';
+
+  const canAccessSection = useCallback((sec: string): boolean => {
+    if (isSuperAdmin) return true;
+    if (!currentUser) return false;
+    const perms = (currentUser?.permissions || {}) as any;
+
+    switch (sec) {
+      case 'dashboard': return Boolean(perms.dashboard);
+      case 'simulador': return Boolean(perms.simulador ?? true);
+      case 'novo_emprestimo': return Boolean(perms.create_loan || perms.novo_emprestimo);
+      case 'pessoas': return Boolean(perms.customers || perms.pessoas);
+      case 'solicitacoes': return Boolean(perms.loans || perms.solicitacoes);
+      case 'maquininhas': return !isConsultant && Boolean(perms.machines || perms.maquininhas);
+      case 'bandeiras': return !isConsultant && Boolean(perms.card_flags);
+      case 'taxas_simulador': return !isConsultant && Boolean(perms.taxas_simulador || perms.card_flags);
+      case 'financeiro': return !isConsultant && Boolean(perms.finance || perms.financeiro);
+      case 'relatorios': return !isConsultant && Boolean(perms.reports || perms.relatorios);
+      case 'usuarios': return isSuperAdmin;
+      case 'logs': return isSuperAdmin;
+      case 'tutoriais': return true;
+      default: return false;
+    }
+  }, [isSuperAdmin, isConsultant, currentUser]);
+
+  const hasPermission = useCallback((key: keyof UserPermissions): boolean => {
+    if (isSuperAdmin) return true;
+    if (!currentUser) return false;
+    return Boolean(currentUser.permissions?.[key]);
+  }, [isSuperAdmin, currentUser]);
+
+  const canApproveLoans = isSuperAdmin || (currentUser?.perfil === 'manager');
+  const canDeleteLoans = isSuperAdmin || Boolean(currentUser?.permissions?.delete_loans);
+  const canManageMachines = isSuperAdmin || (!isConsultant && Boolean(currentUser?.permissions?.machines || (currentUser?.permissions as any)?.maquininhas));
+  const canEditRates = isSuperAdmin || (!isConsultant && Boolean(currentUser?.permissions?.taxas_simulador || (currentUser?.permissions as any)?.card_flags));
+  const canDeleteRecords = isSuperAdmin;
+  const canManageUsers = isSuperAdmin;
+
   return (
     <AuthContext.Provider value={{
       currentUser,
@@ -445,7 +498,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logAudit,
       addNotification,
       authUserEmail: session?.user?.email || currentUser?.email || null,
-      showConfirm
+      showConfirm,
+      isSuperAdmin,
+      isConsultant,
+      canAccessSection,
+      hasPermission,
+      canApproveLoans,
+      canDeleteLoans,
+      canManageMachines,
+      canEditRates,
+      canDeleteRecords,
+      canManageUsers
     }}>
       {children}
       {confirmState.isOpen && (

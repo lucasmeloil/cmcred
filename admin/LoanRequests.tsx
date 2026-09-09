@@ -4,13 +4,14 @@ import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { useAuth } from './AuthContext';
 import { 
   FileText, Search, Filter, Calendar, CheckCircle2, XCircle, Clock, 
-  Trash2, Download, Landmark, Smartphone, Users, User, FileDown, MessageSquare, CreditCard, Wallet, DollarSign, TrendingDown
+  Trash2, Download, Landmark, Smartphone, Users, User, FileDown, MessageSquare, CreditCard, Wallet, DollarSign, TrendingDown, RefreshCw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { LoanRequest, LoanStatus, LoanType, Bank, Machine } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const statusConfig: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
   'in analysis': { color: '#b45309', bg: '#fef3c7', icon: <Clock size={14} />, label: 'Em Análise' },
@@ -66,7 +67,23 @@ const getInitialMachines = (): Machine[] => {
 };
 
 const LoanRequests: React.FC = () => {
-  const { currentUser, authUserEmail, addNotification, logAudit, showConfirm } = useAuth();
+  const { 
+    currentUser, 
+    authUserEmail, 
+    addNotification, 
+    logAudit, 
+    showConfirm, 
+    isSuperAdmin, 
+    isConsultant, 
+    canApproveLoans, 
+    canDeleteLoans 
+  } = useAuth();
+
+  const isAdmin = isSuperAdmin || 
+                  authUserEmail?.toLowerCase().startsWith('admin@') || 
+                  currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
+                  currentUser?.perfil === 'admin';
+
   const [loans, setLoans] = useState<LoanRequest[]>(getInitialLoans);
   const [banks, setBanks] = useState<Bank[]>(getInitialBanks);
   const [machines, setMachines] = useState<Machine[]>(getInitialMachines);
@@ -103,11 +120,15 @@ const LoanRequests: React.FC = () => {
       setLoading(true);
     }
     try {
-      // 1. Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
+      // 1. Carrega operações respeitando o escopo: Admin vê tudo, Consultor vê apenas as suas
       let loansQuery = supabase
         .from('loans')
         .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
         .order('created_at', { ascending: false });
+
+      if (!isAdmin && currentUser?.id) {
+        loansQuery = loansQuery.eq('consultant_id', currentUser.id);
+      }
 
       const [loansRes, banksRes, machinesRes] = await Promise.all([
         loansQuery,
@@ -118,20 +139,29 @@ const LoanRequests: React.FC = () => {
       let rawLoans = loansRes.data || [];
 
       // 2. Fallback resiliente com supabaseAdmin:
-      // Se a consulta normal vier vazia ou falhar por expiração momentânea de token ao voltar para a aba,
-      // busca via supabaseAdmin para garantir dados tanto para o Super Admin quanto para o Consultor!
       if ((rawLoans.length === 0 || loansRes.error) && supabaseAdmin) {
         try {
-          const fallbackRes = await supabaseAdmin
+          let fbQuery = supabaseAdmin
             .from('loans')
             .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
             .order('created_at', { ascending: false });
+
+          if (!isAdmin && currentUser?.id) {
+            fbQuery = fbQuery.eq('consultant_id', currentUser.id);
+          }
+
+          const fallbackRes = await fbQuery;
           if (fallbackRes.data && fallbackRes.data.length > 0) {
             rawLoans = fallbackRes.data;
           }
         } catch (adminErr) {
           console.warn('Fallback supabaseAdmin em loans:', adminErr);
         }
+      }
+
+      // Trava de segurança: se consultor, filtra apenas suas operações
+      if (!isAdmin && currentUser?.id) {
+        rawLoans = rawLoans.filter((l: any) => l.consultant_id === currentUser.id);
       }
 
       // 3. REGRA DE OURO ANTI-ZERAMENTO (20 ANOS DE DEV FULLSTACK):
@@ -193,28 +223,12 @@ const LoanRequests: React.FC = () => {
     }
   }, [addNotification]);
 
-  useEffect(() => {
-    fetchInitialData();
-
-    // Sincronização em tempo real via Supabase Realtime Channels
-    const channel = supabase
-      .channel('loans-realtime-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loans' },
-        () => {
-          fetchInitialData(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchInitialData]);
-
-  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
-  useAutoRefresh(fetchInitialData, 30000);
+  // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['loans', 'banks', 'machines'],
+    onDataChange: fetchInitialData,
+    heartbeatIntervalMs: 45000,
+  });
 
   const downloadReceipt = async (loan: LoanRequest) => {
     try {
@@ -453,6 +467,10 @@ const LoanRequests: React.FC = () => {
   };
 
   const handleDeleteLoan = async (id: string) => {
+    if (!canDeleteLoans) {
+      addNotification('Permissão negada: você não possui privilégios para excluir contratos.', 'alerta');
+      return;
+    }
     const confirmed = await showConfirm('Tem certeza que deseja excluir este registro permanentemente?');
     if (!confirmed) return;
     try {
@@ -478,6 +496,10 @@ const LoanRequests: React.FC = () => {
   };
 
   const handleUpdateStatus = async (id: string, newStatus: LoanStatus, obs?: string) => {
+    if (!canApproveLoans) {
+      addNotification('Permissão negada: apenas administradores podem alterar o status de aprovação de contratos.', 'alerta');
+      return;
+    }
     try {
       const updateData: any = { status: newStatus };
       if (obs !== undefined) updateData.observations = obs;
@@ -537,10 +559,6 @@ const LoanRequests: React.FC = () => {
     return matchSearch && matchStatus && matchDate;
   });
 
-  const isAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
-                  currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
-                  currentUser?.perfil === 'admin';
-
   const totals = filtered.reduce((acc, l) => {
     const fin = calculateLoanFinancials(l);
     acc.gross += fin.grossAmount;
@@ -567,9 +585,12 @@ const LoanRequests: React.FC = () => {
   return (
     <div style={{ padding: '2.5rem', display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ color: '#0f172a', margin: 0, fontSize: '2rem', fontWeight: 900 }}>Gestão de Empréstimos</h2>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.25rem', fontWeight: 600 }}>Acompanhamento e auditoria de contratos realizados</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
+          <div>
+            <h2 style={{ color: '#0f172a', margin: 0, fontSize: '2rem', fontWeight: 900 }}>Gestão de Empréstimos</h2>
+            <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.25rem', fontWeight: 600 }}>Acompanhamento e auditoria de contratos realizados</p>
+          </div>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
         </div>
         {isAdmin && (
           <button onClick={downloadReport} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.8rem 1.5rem', background: '#0f172a', color: '#fff', borderRadius: '12px', fontWeight: 800, border: 'none', cursor: 'pointer' }}>
@@ -755,7 +776,7 @@ const LoanRequests: React.FC = () => {
                           >
                             <FileDown size={15} />
                           </button>
-                          {isAdmin && (
+                          {canDeleteLoans && (
                             <button 
                               onClick={() => handleDeleteLoan(loan.id)}
                               style={{ background: '#fef2f2', border: '1px solid #fee2e2', color: '#ef4444', padding: '0.5rem', borderRadius: '8px', cursor: 'pointer' }}
@@ -831,8 +852,21 @@ const LoanRequests: React.FC = () => {
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
               <div>
-                <label style={{ display: 'block', color: '#0f172a', marginBottom: '0.5rem', fontSize: '0.8rem', fontWeight: 900 }}>ATUALIZAR STATUS</label>
-                <select defaultValue={selected.status} id="status_update" style={{ ...inputStyle, height: '48px', marginBottom: 0 }}>
+                <label style={{ display: 'block', color: '#0f172a', marginBottom: '0.5rem', fontSize: '0.8rem', fontWeight: 900 }}>
+                  ATUALIZAR STATUS {!canApproveLoans && '(Restrito à Administração)'}
+                </label>
+                <select 
+                  defaultValue={selected.status} 
+                  id="status_update" 
+                  disabled={!canApproveLoans}
+                  style={{ 
+                    ...inputStyle, 
+                    height: '48px', 
+                    marginBottom: 0,
+                    opacity: canApproveLoans ? 1 : 0.6,
+                    cursor: canApproveLoans ? 'pointer' : 'not-allowed'
+                  }}
+                >
                   {Object.keys(statusConfig).map(s => (
                     <option key={s} value={s}>{statusConfig[s as LoanStatus]?.label || s}</option>
                   ))}
@@ -889,17 +923,19 @@ const LoanRequests: React.FC = () => {
                 >
                   <Smartphone size={18} /> Enviar via WhatsApp
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const statusEl = document.getElementById('status_update') as HTMLSelectElement;
-                    const obsEl = document.getElementById('obs_update') as HTMLInputElement;
-                    handleUpdateStatus(selected.id, statusEl.value as LoanStatus, obsEl.value);
-                  }}
-                  style={{ background: '#0f172a', color: '#fff', border: 'none', padding: '0.85rem 1.5rem', borderRadius: '12px', fontWeight: 800, cursor: 'pointer' }}
-                >
-                  Salvar Alterações
-                </button>
+                {canApproveLoans && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const statusEl = document.getElementById('status_update') as HTMLSelectElement;
+                      const obsEl = document.getElementById('obs_update') as HTMLInputElement;
+                      handleUpdateStatus(selected.id, statusEl.value as LoanStatus, obsEl.value);
+                    }}
+                    style={{ background: '#0f172a', color: '#fff', border: 'none', padding: '0.85rem 1.5rem', borderRadius: '12px', fontWeight: 800, cursor: 'pointer' }}
+                  >
+                    Salvar Alterações
+                  </button>
+                )}
               </div>
             </div>
 

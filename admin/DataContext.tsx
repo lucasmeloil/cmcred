@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { useAuth } from './AuthContext';
 import type { LoanRequest, Customer, FinanceEntry, Machine, Bank } from './types';
 import { calculateLoanFinancials, fetchRatesFromDatabase, TABELA_1_RATES, TABELA_2_RATES } from '../lib/rates';
+import { useRealtimeSync, type RealtimeSyncStatus } from '../lib/useRealtimeSync';
 
 // =========================================================================
 // TIPOS DO CONTEXTO DE DADOS EM TEMPO REAL
@@ -36,7 +37,9 @@ export interface DataContextType {
   loading: boolean;
   isRevalidating: boolean;
   lastSync: Date | null;
+  syncStatus: RealtimeSyncStatus;
   revalidateAll: (isSilent?: boolean) => Promise<void>;
+  forceSync: () => Promise<void>;
   dashboardStats: DashboardStats;
 }
 
@@ -189,101 +192,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isSuperAdmin, currentUser?.id]);
 
   // =======================================================================
-  // 1. REVALIDAÇÃO CONTROLADA NO RETORNO À ABA (visibilitychange com cooldown)
+  // SINCRONIZAÇÃO EM TEMPO REAL COM AUTO-HEAL (useRealtimeSync)
+  // Revalida dados imediatamente no retorno à aba (visibilitychange e focus),
+  // reconecta automaticamente em oscilações de rede (online/offline e timeouts)
+  // e mantém heartbeat de contingência a cada 45s.
   // =======================================================================
-  const lastVisibilitySyncRef = useRef<number>(Date.now());
-
-  useEffect(() => {
-    revalidateAll(false);
-
-    const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        const now = Date.now();
-        // Só revalida do banco se a aba ficou inativa por mais de 60 segundos,
-        // pois o Realtime do Supabase já atualiza as alterações instantaneamente
-        if (now - lastVisibilitySyncRef.current > 60000) {
-          lastVisibilitySyncRef.current = now;
-          revalidateAll(true);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [revalidateAll]);
-
-  // =======================================================================
-  // 2. SUPABASE REALTIME SUBSCRIPTIONS (INSERT, UPDATE, DELETE)
-  // =======================================================================
-  useEffect(() => {
-    const channel = supabase
-      .channel('cmcred-global-realtime-sync')
-      // Tabela: loans
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loans' },
-        (payload) => {
-          if (payload.eventType === 'DELETE') {
-            setLoans(prev => prev.filter(l => l.id !== payload.old.id));
-          } else {
-            // Em INSERT ou UPDATE, revalida suavemente para carregar os joins de leads/customers/banks
-            revalidateAll(true);
-          }
-        }
-      )
-      // Tabela: finance
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'finance' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setFinance(prev => [payload.new as FinanceEntry, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setFinance(prev => prev.map(f => f.id === payload.new.id ? { ...f, ...payload.new } : f));
-          } else if (payload.eventType === 'DELETE') {
-            setFinance(prev => prev.filter(f => f.id !== payload.old.id));
-          }
-        }
-      )
-      // Tabela: customers
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setCustomers(prev => [payload.new as Customer, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setCustomers(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c));
-          } else if (payload.eventType === 'DELETE') {
-            setCustomers(prev => prev.filter(c => c.id !== payload.old.id));
-          }
-        }
-      )
-      // Tabela: machines
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'machines' },
-        () => {
-          revalidateAll(true);
-        }
-      )
-      // Tabela: simulator_rates
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'simulator_rates' },
-        () => {
-          revalidateAll(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [revalidateAll]);
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['loans', 'finance', 'customers', 'machines', 'simulator_rates', 'banks'],
+    onDataChange: revalidateAll,
+    heartbeatIntervalMs: 45000,
+  });
 
   // =======================================================================
   // 3. CÁLCULO DAS MÉTRICAS DO DASHBOARD EM TEMPO REAL
@@ -351,12 +269,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ratesT2,
     loading,
     isRevalidating,
-    lastSync,
+    lastSync: lastSyncTime || lastSync,
+    syncStatus,
     revalidateAll,
+    forceSync,
     dashboardStats
   }), [
     loans, customers, finance, machines, banks, ratesT1, ratesT2,
-    loading, isRevalidating, lastSync, revalidateAll, dashboardStats
+    loading, isRevalidating, lastSyncTime, lastSync, syncStatus, revalidateAll, forceSync, dashboardStats
   ]);
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

@@ -57,7 +57,7 @@ const SECTION_CONFIG: Record<string, { title: string; subtitle: string }> = {
 };
 
 const AdminApp: React.FC = () => {
-  const { currentUser, isAuthenticated, sidebarOpen, isLoading, notifications, markNotificationRead, authUserEmail } = useAuth();
+  const { currentUser, isAuthenticated, sidebarOpen, isLoading, notifications, markNotificationRead, authUserEmail, canAccessSection } = useAuth();
   const [activeSection, setActiveSectionState] = useState(() => {
     try {
       const hash = window.location.hash.replace('#', '').toLowerCase();
@@ -138,48 +138,82 @@ const AdminApp: React.FC = () => {
   const activeToasts = (notifications as any[]).filter(n => n.isNew);
 
   const renderSection = () => {
-    const email = (currentUser?.email || authUserEmail || '').toLowerCase();
-    const isSuperAdmin = email === 'caique@cmcred.com.br' ||
-                         email.includes('caique') ||
-                         currentUser?.perfil === 'admin';
-    const isConsultant = !isSuperAdmin && currentUser?.perfil === 'consultant';
-
-    const canAccessSection = (sec: string): boolean => {
-      // Super Admin Principal tem acesso 100% total e irrestrito a todas as áreas
-      if (isSuperAdmin) return true;
-
-      const perms = (currentUser?.permissions || {}) as any;
-      
-      switch (sec) {
-        case 'dashboard': return Boolean(perms.dashboard);
-        case 'simulador': return Boolean(perms.simulador ?? true);
-        case 'novo_emprestimo': return Boolean(perms.create_loan || perms.novo_emprestimo);
-        case 'pessoas': return Boolean(perms.customers || perms.pessoas);
-        case 'solicitacoes': return Boolean(perms.loans || perms.solicitacoes);
-        case 'maquininhas': return Boolean(perms.machines || perms.maquininhas);
-        case 'taxas_simulador': return Boolean(perms.taxas_simulador || perms.card_flags);
-        case 'financeiro': return Boolean(perms.finance || perms.financeiro);
-        case 'relatorios': return Boolean(perms.reports || perms.relatorios);
-        case 'usuarios': return !isConsultant && Boolean(perms.users || perms.usuarios);
-        case 'logs': return !isConsultant && Boolean(perms.audit || perms.logs);
-        case 'tutoriais': return true;
-        default: return false;
-      }
-    };
-
     if (!canAccessSection(activeSection)) {
+      const allowedFallback = canAccessSection('simulador') 
+        ? 'simulador' 
+        : canAccessSection('novo_emprestimo') 
+          ? 'novo_emprestimo' 
+          : canAccessSection('solicitacoes') 
+            ? 'solicitacoes' 
+            : canAccessSection('dashboard') 
+              ? 'dashboard' 
+              : 'tutoriais';
+
       return (
-        <div style={{ padding: '4rem 2rem', textAlign: 'center', background: '#ffffff', borderRadius: '24px', margin: '2rem', border: '1px solid #fee2e2' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔒</div>
-          <h2 style={{ color: '#0f172a', fontWeight: 900, marginBottom: '0.5rem' }}>Acesso Restrito</h2>
-          <p style={{ color: '#64748b', fontSize: '1rem', maxWidth: '500px', margin: '0 auto 1.5rem' }}>
-            Este módulo é restrito a administradores. Acessos não autorizados são monitorados e registrados por segurança.
+        <div style={{ 
+          padding: '4rem 2rem', 
+          maxWidth: '640px',
+          margin: '3rem auto',
+          textAlign: 'center', 
+          background: 'linear-gradient(135deg, #ffffff 0%, #fffbf0 100%)', 
+          borderRadius: '28px', 
+          border: '1px solid #fed7aa',
+          boxShadow: '0 20px 40px -15px rgba(217, 119, 6, 0.1)',
+          animation: 'fadeIn 0.4s ease-out'
+        }}>
+          <div style={{ 
+            width: '80px', 
+            height: '80px', 
+            margin: '0 auto 1.5rem', 
+            borderRadius: '24px', 
+            background: 'linear-gradient(135deg, #fef3c7 0%, #fee2e2 100%)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '2.5rem',
+            boxShadow: '0 8px 16px rgba(239, 68, 68, 0.15)',
+            border: '1px solid rgba(239, 68, 68, 0.2)'
+          }}>
+            🔒
+          </div>
+          <span style={{
+            display: 'inline-block',
+            padding: '4px 14px',
+            borderRadius: '999px',
+            background: '#fee2e2',
+            color: '#dc2626',
+            fontSize: '0.75rem',
+            fontWeight: 800,
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+            marginBottom: '0.75rem'
+          }}>
+            Módulo Protegido
+          </span>
+          <h2 style={{ color: '#0f172a', fontWeight: 900, fontSize: '1.6rem', marginBottom: '0.75rem', letterSpacing: '-0.5px' }}>
+            Acesso Restrito
+          </h2>
+          <p style={{ color: '#64748b', fontSize: '0.95rem', lineHeight: 1.6, maxWidth: '480px', margin: '0 auto 2rem', fontWeight: 500 }}>
+            Você não possui permissão para visualizar o módulo <strong>{sectionInfo.title}</strong>. Para liberar seu acesso a esta área, solicite a autorização de um Administrador no painel de Acessos.
           </p>
           <button 
-            onClick={() => setActiveSection('simulador')}
-            style={{ background: '#d97706', color: '#fff', border: 'none', padding: '0.85rem 1.75rem', borderRadius: '14px', fontWeight: 800, cursor: 'pointer' }}
+            onClick={() => setActiveSection(allowedFallback)}
+            style={{ 
+              background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)', 
+              color: '#ffffff', 
+              border: 'none', 
+              padding: '0.9rem 2rem', 
+              borderRadius: '16px', 
+              fontWeight: 800, 
+              fontSize: '0.95rem',
+              cursor: 'pointer',
+              boxShadow: '0 8px 16px rgba(217, 119, 6, 0.25)',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
           >
-            Voltar ao Simulador
+            Ir para Módulo Disponível
           </button>
         </div>
       );

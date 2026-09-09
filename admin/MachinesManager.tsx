@@ -27,6 +27,8 @@ import { useAuth } from './AuthContext';
 import { getCustomCardFlags, type CardFlagOption } from '../lib/rates';
 import type { Bank } from './types';
 import { RateInput } from './RateInput';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 
 // Baseline de custo MDR padrão de mercado para adquirentes (Stone, PagBank, Cielo, etc.)
@@ -62,12 +64,8 @@ interface MachineModel {
 }
 
 const MachinesManager: React.FC = () => {
-  const { addNotification, currentUser, logAudit, showConfirm } = useAuth();
-  const isAdmin = currentUser?.perfil === 'admin' || 
-                  currentUser?.email?.toLowerCase().includes('admin') || 
-                  currentUser?.email?.toLowerCase().includes('cmcred');
-  // Permite que tanto o Admin Geral quanto o Consultor possam visualizar, cadastrar e editar maquininhas e prazos (D+0, D+1, D+2)
-  const canManageMachines = true;
+  const { addNotification, currentUser, logAudit, showConfirm, isSuperAdmin, isConsultant, canManageMachines } = useAuth();
+  const isAdmin = isSuperAdmin;
   
   const [machines, setMachines] = useState<MachineModel[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -147,31 +145,12 @@ const MachinesManager: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-
-    const channel = supabase
-      .channel('realtime-machines-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'machines' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'banks' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['machines', 'banks'],
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000,
+  });
 
   // Preencher com sugestão de mercado de adquirentes (Stone/PagBank/Cielo)
   const handleLoadMarketDefaults = () => {
@@ -239,6 +218,10 @@ const MachinesManager: React.FC = () => {
   // Salvar no Banco de Dados Supabase com garantia via supabaseAdmin
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageMachines) {
+      addNotification('Permissão negada: você não possui privilégio para cadastrar ou editar máquinas.', 'alerta');
+      return;
+    }
     if (!formData.name.trim()) return addNotification('Informe o nome da maquininha.', 'alerta');
 
     setSaving(true);
@@ -382,6 +365,10 @@ const MachinesManager: React.FC = () => {
   };
 
   const handleDeleteMachine = async (id: number, name: string) => {
+    if (!canManageMachines && !isAdmin) {
+      addNotification('Permissão negada: você não possui privilégio para excluir máquinas.', 'alerta');
+      return;
+    }
     const confirmed = await showConfirm(`Tem certeza que deseja excluir a maquininha "${name}" permanentemente do banco de dados?`);
     if (!confirmed) return;
     
@@ -481,9 +468,12 @@ const MachinesManager: React.FC = () => {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2.5rem' }}>
         <div>
-          <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Cpu size={34} color="#d97706" /> Gestão de Maquininhas POS & Retenção
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Cpu size={34} color="#d97706" /> Gestão de Maquininhas POS & Retenção
+            </h1>
+            <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+          </div>
           <p style={{ color: '#64748b', fontSize: '1rem', marginTop: '0.4rem', fontWeight: 500 }}>
             Configuração 100% dinâmica e ajustável das taxas de retenção (MDR de adquirente) por parcela (1x a 18x) e bandeira
           </p>

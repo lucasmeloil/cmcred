@@ -39,7 +39,8 @@ import {
   type RateTableType,
   TABLE_OPTIONS
 } from '../lib/rates';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const CreateLoan: React.FC = () => {
   const { currentUser, addNotification, logAudit } = useAuth();
@@ -211,43 +212,20 @@ const CreateLoan: React.FC = () => {
     window.addEventListener('bonuscred_rates_updated', handleRatesUpdate);
     window.addEventListener('bonuscred_flags_updated', handleRatesUpdate);
 
-    // Sincronização em tempo real via Supabase Realtime Channels
-    const channel = supabase
-      .channel('create-loan-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
-        () => {
-          fetchData();
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'machines' },
-        () => {
-          fetchData();
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'simulator_rates' },
-        () => {
-          fetchData();
-        }
-      )
-      .subscribe();
-
     return () => {
       window.removeEventListener('cmcred_rates_updated', handleRatesUpdate);
       window.removeEventListener('cmcred_flags_updated', handleRatesUpdate);
       window.removeEventListener('bonuscred_rates_updated', handleRatesUpdate);
       window.removeEventListener('bonuscred_flags_updated', handleRatesUpdate);
-      supabase.removeChannel(channel);
     };
   }, [currentUser?.id, currentUser?.perfil, rateTableType]);
 
-  // Atualização automática dos dados a cada 30 segundos e ao alternar de aba (sem F5)
-  useAutoRefresh(fetchData, 30000);
+  // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['customers', 'machines', 'simulator_rates'],
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000,
+  });
 
   // Atualizar a taxa padrão automaticamente ao trocar de tabela, bandeira ou quantidade de vezes
   useEffect(() => {
@@ -544,6 +522,9 @@ const CreateLoan: React.FC = () => {
         <p style={{ color: '#64748b', fontSize: '1rem', marginTop: '0.4rem', fontWeight: 500 }}>
           Selecione a quantidade de vezes (1x a 18x) e os valores de repasse ao cliente serão calculados instantaneamente
         </p>
+        <div style={{ marginTop: '0.85rem', display: 'flex', justifyContent: 'center' }}>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+        </div>
       </header>
 
       <form onSubmit={handleSubmit} style={cardStyle}>

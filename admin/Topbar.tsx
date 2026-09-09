@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
+import { useData } from './DataContext';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { Search, Bell, Calendar, User, Layout, MessageSquare, AlertCircle, Menu, X } from 'lucide-react';
 
 interface TopbarProps {
@@ -9,6 +11,7 @@ interface TopbarProps {
 
 const Topbar: React.FC<TopbarProps> = ({ title, subtitle }) => {
   const { notifications, markNotificationRead, unreadCount, toggleSidebar, sidebarOpen } = useAuth();
+  const { syncStatus, lastSync, forceSync } = useData();
   const [showNotifs, setShowNotifs] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
@@ -85,7 +88,13 @@ const Topbar: React.FC<TopbarProps> = ({ title, subtitle }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '0.75rem' : '1.25rem' }}>
-
+        {/* Realtime Status Badge */}
+        <RealtimeStatusBadge
+          status={syncStatus || 'connected'}
+          lastSyncTime={lastSync || new Date()}
+          onRefresh={forceSync}
+          compact={isMobile}
+        />
 
         {/* Notifications Hub */}
         <div style={{ position: 'relative' }}>

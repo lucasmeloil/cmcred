@@ -10,6 +10,8 @@ import {
 import { useAuth } from './AuthContext';
 import type { AdminUser, UserRole, UserStatus, UserPermissions } from './types';
 import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 const roleConfig: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   admin:      { color: '#d97706', bg: '#fffbeb', label: 'Administrador (Super Admin)', icon: <Shield size={14} /> },
@@ -201,25 +203,12 @@ const UsersManager: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { 
-    fetchUsers(); 
-
-    // Sincronização em tempo real de usuários e permissões
-    const channel = supabase
-      .channel('realtime-profiles-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles' },
-        () => {
-          fetchUsers();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchUsers]);
+  // Sincronização em tempo real de usuários e permissões com Auto-Heal
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    table: 'profiles',
+    onDataChange: fetchUsers,
+    heartbeatIntervalMs: 45000,
+  });
 
   // Função centralizada para atualizar senha de qualquer usuário ou admin
   const changeUserPassword = async (
@@ -532,9 +521,12 @@ const UsersManager: React.FC = () => {
       {/* Header */}
       <header style={{ marginBottom: '2.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 style={{ color: '#0f172a', fontSize: '2.2rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem', letterSpacing: '-0.5px' }}>
-            <Shield size={34} color="#d97706" /> Controle de Acessos & Senhas
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <h1 style={{ color: '#0f172a', fontSize: '2.2rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem', letterSpacing: '-0.5px' }}>
+              <Shield size={34} color="#d97706" /> Controle de Acessos & Senhas
+            </h1>
+            <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+          </div>
           <p style={{ color: '#64748b', margin: '0.5rem 0 0', fontWeight: 600, fontSize: '0.95rem' }}>
             Gerenciamento exclusivo do Administrador: altere senhas com precisão no banco e defina acessos de consultores.
           </p>

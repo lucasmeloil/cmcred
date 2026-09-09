@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import {
   getCustomCardFlags,
   getRateForFlagAndInstallment,
@@ -48,22 +50,27 @@ const Simulator: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [ratesVersion, setRatesVersion] = useState(0);
 
-  useEffect(() => {
-    let isMounted = true;
-    let debounceTimer: any = null;
-
-    // 1. Busca inicial apenas na montagem do componente
-    fetchRatesFromDatabase().then(({ flags: dbFlags }) => {
-      if (!isMounted) return;
+  const loadRates = React.useCallback(async () => {
+    try {
+      const { flags: dbFlags } = await fetchRatesFromDatabase(true);
       if (dbFlags && dbFlags.length > 0) {
         setFlags(dbFlags);
       }
       setRatesVersion(v => v + 1);
-    }).catch(err => console.warn('Aviso ao carregar taxas no simulador:', err));
+    } catch (err) {
+      console.warn('Aviso ao carregar taxas no simulador:', err);
+    }
+  }, []);
 
-    // 2. Ouvinte de eventos locais: sincroniza instantaneamente da memória/localStorage sem fazer fetch HTTP!
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    table: 'simulator_rates',
+    onDataChange: loadRates,
+    heartbeatIntervalMs: 45000,
+  });
+
+  useEffect(() => {
+    // Ouvinte de eventos locais: sincroniza instantaneamente da memória/localStorage sem fazer fetch HTTP
     const handleLocalUpdate = () => {
-      if (!isMounted) return;
       const updatedFlags = getCustomCardFlags();
       if (updatedFlags && updatedFlags.length > 0) {
         setFlags(updatedFlags);
@@ -76,51 +83,11 @@ const Simulator: React.FC = () => {
     window.addEventListener('bonuscred_rates_updated', handleLocalUpdate);
     window.addEventListener('bonuscred_flags_updated', handleLocalUpdate);
 
-    // 3. Realtime do Supabase: somente dispara se a aba estiver visível e com debounce de 1s
-    const channel = supabase
-      .channel('simulator-rates-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'simulator_rates' },
-        () => {
-          if (!isMounted) return;
-          // Pausa se o usuário estiver em outra aba para economizar recursos e evitar ban
-          if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-            return;
-          }
-          clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            if (!isMounted) return;
-            fetchRatesFromDatabase(true).then(({ flags: dbFlags }) => {
-              if (!isMounted) return;
-              if (dbFlags && dbFlags.length > 0) {
-                setFlags(dbFlags);
-              }
-              setRatesVersion(v => v + 1);
-            });
-          }, 1000);
-        }
-      )
-      .subscribe();
-
-    // 4. Ao alternar abas: sincroniza apenas do cache local sem floodar o Supabase
-    const handleVisibilityChange = () => {
-      if (!isMounted) return;
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        handleLocalUpdate();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     return () => {
-      isMounted = false;
-      clearTimeout(debounceTimer);
       window.removeEventListener('cmcred_rates_updated', handleLocalUpdate);
       window.removeEventListener('cmcred_flags_updated', handleLocalUpdate);
       window.removeEventListener('bonuscred_rates_updated', handleLocalUpdate);
       window.removeEventListener('bonuscred_flags_updated', handleLocalUpdate);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      supabase.removeChannel(channel);
     };
   }, []);
 
@@ -324,10 +291,13 @@ const Simulator: React.FC = () => {
   return (
     <div style={{ padding: '2.5rem', width: '100%', maxWidth: '1280px', margin: '0 auto' }}>
       {/* Header */}
-      <header style={{ marginBottom: '2.5rem', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '2.25rem', fontWeight: 900, margin: 0, color: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
-          <Coins size={36} color="#d97706" /> Simulador de Empréstimo CM CRED
-        </h1>
+      <header style={{ marginBottom: '2.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <h1 style={{ fontSize: '2.25rem', fontWeight: 900, margin: 0, color: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
+            <Coins size={36} color="#d97706" /> Simulador de Empréstimo CM CRED
+          </h1>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+        </div>
         <p style={{ color: '#64748b', fontSize: '1.05rem', marginTop: '0.5rem', fontWeight: 500 }}>
           Cálculo dinâmico preciso de taxas por bandeira e parcelamento (1x a 18x)
         </p>

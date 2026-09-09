@@ -22,7 +22,8 @@ import {
 import { useAuth } from './AuthContext';
 import { calculateLoanFinancials, groupLoansByMachine, MachineSettlementSummary } from '../lib/rates';
 import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
-import { useAutoRefresh } from '../lib/useAutoRefresh';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 
 interface LoanReportRow {
   id: string;
@@ -55,7 +56,7 @@ interface LoanReportRow {
 }
 
 const ReportsManager: React.FC = () => {
-  const { addNotification, logAudit } = useAuth();
+  const { addNotification, logAudit, currentUser, isSuperAdmin } = useAuth();
   
   // Data State
   const [loans, setLoans] = useState<any[]>([]);
@@ -79,14 +80,23 @@ const ReportsManager: React.FC = () => {
       setLoading(true);
     }
     try {
+      let loansQuery = supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
+      if (!isSuperAdmin && currentUser?.id) {
+        loansQuery = loansQuery.eq('consultant_id', currentUser.id);
+      }
+
       const [loansRes, financeRes, profilesRes] = await Promise.all([
-        supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)').order('created_at', { ascending: false }),
+        loansQuery,
         supabase.from('finance').select('*').order('due_date', { ascending: false }),
         supabase.from('profiles').select('id, full_name, role')
       ]);
 
       if (loansRes.data) {
-        setLoans(loansRes.data);
+        let fetchedLoans = loansRes.data;
+        if (!isSuperAdmin && currentUser?.id) {
+          fetchedLoans = fetchedLoans.filter((l: any) => l.consultant_id === currentUser.id);
+        }
+        setLoans(fetchedLoans);
       }
       if (financeRes.data) {
         setFinance(financeRes.data);
@@ -101,37 +111,14 @@ const ReportsManager: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [addNotification]);
+  }, [addNotification, isSuperAdmin, currentUser?.id]);
 
-  useEffect(() => {
-    fetchData();
-
-    // Sincronização em tempo real via Supabase Realtime Channels
-    const channel = supabase
-      .channel('reports-realtime-channel')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loans' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'finance' },
-        () => {
-          fetchData(true);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [fetchData]);
-
-  // Atualização automática dos relatórios ao alternar de aba (sem F5)
-  useAutoRefresh(fetchData, 30000);
+  // Sincronização em tempo real inteligente com Auto-Heal e re-fetch
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    tables: ['loans', 'finance'],
+    onDataChange: () => fetchData(true),
+    heartbeatIntervalMs: 45000,
+  });
 
   // Processar lista de operações com cálculo rigoroso de retenção da maquininha e lucro real
   const loansReportList = useMemo<LoanReportRow[]>(() => {
@@ -592,9 +579,12 @@ const ReportsManager: React.FC = () => {
       {/* Header */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2rem' }}>
         <div>
-          <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <FileDown size={34} color="#d97706" /> Central de Relatórios & Operações
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <FileDown size={34} color="#d97706" /> Central de Relatórios & Operações
+            </h1>
+            <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+          </div>
           <p style={{ color: '#64748b', fontSize: '1rem', marginTop: '0.4rem', fontWeight: 500 }}>
             Visão estilo planilha com detalhamento de retenção da maquininha, valor repassado ao cliente (PIX) e lucro real da CM CRED
           </p>

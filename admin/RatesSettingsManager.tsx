@@ -26,6 +26,8 @@ import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import MachinesManager from './MachinesManager';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { 
   getCustomCardRates, 
   getCustomCardFlags,
@@ -44,11 +46,9 @@ import { RateInput } from './RateInput';
 
 
 const RatesSettingsManager: React.FC = () => {
-  const { currentUser, addNotification, logAudit } = useAuth();
+  const { currentUser, addNotification, logAudit, isSuperAdmin, canEditRates } = useAuth();
   
-  const isAdmin = currentUser?.perfil === 'admin' || 
-                  currentUser?.email?.toLowerCase().includes('admin') || 
-                  currentUser?.email?.toLowerCase().includes('cmcred');
+  const isAdmin = isSuperAdmin || canEditRates;
 
   // Tab ativa: 'rates' (Taxas 1x a 18x) | 'machines' (Gestão de Maquininhas POS)
   const [activeMainTab, setActiveMainTab] = useState<'rates' | 'machines'>('rates');
@@ -101,23 +101,19 @@ const RatesSettingsManager: React.FC = () => {
     latestRef.current = { ratesT1, ratesT2, flags, activeTable, hasChanges };
   }, [ratesT1, ratesT2, flags, activeTable, hasChanges]);
 
+  const onRealtimeDataChange = React.useCallback(async () => {
+    if (!latestRef.current.hasChanges) {
+      await loadDatabaseRates();
+    }
+  }, []);
+
+  const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
+    table: 'simulator_rates',
+    onDataChange: onRealtimeDataChange,
+    heartbeatIntervalMs: 45000,
+  });
+
   useEffect(() => {
-    loadDatabaseRates();
-
-    const channel = supabase
-      .channel('rates-settings-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'simulator_rates' },
-        () => {
-          // Apenas recarrega se não tiver alterações locais pendentes
-          if (!latestRef.current.hasChanges) {
-            loadDatabaseRates();
-          }
-        }
-      )
-      .subscribe();
-
     const onBeforeUnload = () => {
       if (latestRef.current.hasChanges) {
         const d = latestRef.current.activeTable === 'tabela_1' ? latestRef.current.ratesT1 : latestRef.current.ratesT2;
@@ -128,7 +124,6 @@ const RatesSettingsManager: React.FC = () => {
 
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload);
-      supabase.removeChannel(channel);
       if (latestRef.current.hasChanges) {
         const d = latestRef.current.activeTable === 'tabela_1' ? latestRef.current.ratesT1 : latestRef.current.ratesT2;
         saveAllRatesToDatabase(d, latestRef.current.flags, latestRef.current.activeTable);
@@ -138,7 +133,7 @@ const RatesSettingsManager: React.FC = () => {
 
   // Auto-save inteligente: Salva automaticamente no banco Supabase após 2 segundos sem digitação
   useEffect(() => {
-    if (!hasChanges) return;
+    if (!hasChanges || !isAdmin) return;
     const timer = setTimeout(() => {
       const activeData = activeTable === 'tabela_1' ? ratesT1 : ratesT2;
       saveAllRatesToDatabase(activeData, flags, activeTable).then(res => {
@@ -179,6 +174,10 @@ const RatesSettingsManager: React.FC = () => {
 
   // Salvar alterações no Banco de Dados Supabase (POST / UPSERT)
   const handleSave = async () => {
+    if (!isAdmin) {
+      addNotification('Permissão negada: você não possui privilégio para alterar taxas.', 'alerta');
+      return;
+    }
     setSaving(true);
     try {
       const activeData = activeTable === 'tabela_1' ? ratesT1 : ratesT2;
@@ -199,6 +198,10 @@ const RatesSettingsManager: React.FC = () => {
 
   // Restaurar padrões originais no Banco de Dados
   const handleReset = async () => {
+    if (!isAdmin) {
+      addNotification('Permissão negada: você não possui privilégio para restaurar taxas.', 'alerta');
+      return;
+    }
     const tableName = activeTable === 'tabela_1' ? 'Tabela 1 (Padrão 7% a 19.99%)' : 'Tabela 2 (Reduzida 5.5% a 18.5%)';
     if (window.confirm(`Deseja restaurar as taxas padrão da ${tableName} no Banco de Dados?`)) {
       setSaving(true);
@@ -219,6 +222,10 @@ const RatesSettingsManager: React.FC = () => {
 
   // Adicionar nova bandeira no Banco de Dados
   const handleAddFlag = async () => {
+    if (!isAdmin) {
+      addNotification('Permissão negada: você não possui privilégio para cadastrar bandeiras.', 'alerta');
+      return;
+    }
     const name = window.prompt('Digite o nome da nova bandeira / categoria (Ex: HIPERCARD, CABAL):');
     if (!name || !name.trim()) return;
     const cleanName = name.trim().toUpperCase();
@@ -259,6 +266,10 @@ const RatesSettingsManager: React.FC = () => {
     
   // Remover bandeira do Banco de Dados
   const handleRemoveFlag = async (flagKey: string) => {
+    if (!isAdmin) {
+      addNotification('Permissão negada: você não possui privilégio para remover bandeiras.', 'alerta');
+      return;
+    }
     if (['VISA_MASTER', 'BANESE/ELO', 'AMEX'].includes(flagKey)) {
       addNotification('As bandeiras oficiais principais não podem ser removidas.', 'alerta');
       return;
@@ -352,24 +363,11 @@ const RatesSettingsManager: React.FC = () => {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2rem' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: '2.25rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
               <Sliders size={34} color="#d97706" /> Configurações de Taxas & Maquininhas
             </h1>
-            <span style={{ 
-              display: 'inline-flex', 
-              alignItems: 'center', 
-              gap: '0.4rem', 
-              background: '#f0fdf4', 
-              color: '#d97706', 
-              border: '1px solid #bbf7d0',
-              padding: '0.3rem 0.75rem', 
-              borderRadius: '20px', 
-              fontSize: '0.75rem', 
-              fontWeight: 800 
-            }}>
-              <Database size={13} /> Sincronizado com Banco Supabase
-            </span>
+            <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
           </div>
           <p style={{ color: '#64748b', fontSize: '1.05rem', marginTop: '0.5rem', fontWeight: 500 }}>
             Gerencie e personalize taxas de 1x a 18x por bandeira e cadastre as maquininhas POS com gravação direta no banco.
