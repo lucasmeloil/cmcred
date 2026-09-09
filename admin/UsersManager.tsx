@@ -12,6 +12,7 @@ import type { AdminUser, UserRole, UserStatus, UserPermissions } from './types';
 import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { isSuperAdminEmail } from '../lib/security';
 
 const roleConfig: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   admin:      { color: '#d97706', bg: '#fffbeb', label: 'Administrador (Super Admin)', icon: <Shield size={14} /> },
@@ -53,10 +54,12 @@ const TABS = [
 const UsersManager: React.FC = () => {
   const { addNotification, logAudit, authUserEmail, showConfirm, currentUser } = useAuth();
   
-  const isSuperAdmin = authUserEmail?.toLowerCase().includes('admin') ||
-                       authUserEmail?.toLowerCase().includes('cmcred') ||
-                       authUserEmail?.toLowerCase() === 'caique@cmcred.com.br' ||
+  const isSuperAdmin = authUserEmail?.toLowerCase() === 'caique@cmcred.com.br' ||
+                       authUserEmail?.toLowerCase() === 'lucas@teste.com.br' ||
                        authUserEmail?.toLowerCase().includes('caique') ||
+                       authUserEmail?.toLowerCase().includes('admin') ||
+                       authUserEmail?.toLowerCase().includes('cmcred') ||
+                       isSuperAdminEmail(authUserEmail) ||
                        currentUser?.perfil === 'admin';
 
   const isConsultantUser = currentUser?.perfil === 'consultant' && !isSuperAdmin;
@@ -64,7 +67,7 @@ const UsersManager: React.FC = () => {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editPassword, setEditPassword] = useState('');
   const [activeTab, setActiveTab] = useState('all');
@@ -143,23 +146,26 @@ const UsersManager: React.FC = () => {
     });
   };
 
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
+  const fetchUsers = useCallback(async (isSilent = false) => {
+    if (!isSilent) {
+      setLoading(true);
+    }
     try {
-      const { data, error } = await supabase.from('profiles').select('*').order('full_name');
-      if (error) throw error;
+      let { data, error } = await supabase.from('profiles').select('*').order('full_name');
       
       let mappedUsers: AdminUser[] = [];
       if (data && data.length > 0) {
         mappedUsers = data.map(d => {
-          const isSuperAdminAccount = d.email?.toLowerCase() === 'caique@cmcred.com.br' || d.email?.toLowerCase().includes('caique');
+          const isLucas = d.email?.toLowerCase() === 'lucas@teste.com.br' || d.email?.toLowerCase().includes('lucas');
+          const isCaique = d.email?.toLowerCase() === 'caique@cmcred.com.br' || d.email?.toLowerCase().includes('caique');
+          const isSuperAdminAccount = isCaique || isLucas || isSuperAdminEmail(d.email);
           const isAdminUser = isSuperAdminAccount || d.email?.toLowerCase().includes('admin') || d.role === 'admin';
           const role = isAdminUser ? 'admin' : (d.role as UserRole);
           const perms = isAdminUser || role === 'admin' ? ADMIN_PERMISSIONS : (d.permissions || DEFAULT_PERMISSIONS);
 
           return {
             id: d.id,
-            nome: d.full_name || (isSuperAdminAccount ? 'Caique (Super Admin)' : (isAdminUser ? 'Administrador CM CRED' : 'Consultor')),
+            nome: d.full_name || (isLucas ? 'Lucas (Admin Geral)' : (isCaique ? 'Caique (Super Admin)' : (isAdminUser ? 'Administrador CM CRED' : 'Consultor'))),
             email: d.email || '',
             perfil: role,
             status: d.status as UserStatus,
@@ -184,20 +190,23 @@ const UsersManager: React.FC = () => {
         });
       }
 
+      // Garante que o Admin Geral Lucas sempre apareça na lista de acessos
+      if (!mappedUsers.some(u => u.email.toLowerCase() === 'lucas@teste.com.br')) {
+        mappedUsers.splice(1, 0, {
+          id: 'aa38eec1-3a64-4e17-ab16-401d032b81b3',
+          nome: 'Lucas (Admin Geral)',
+          email: 'lucas@teste.com.br',
+          perfil: 'admin',
+          status: 'active',
+          dataCriacao: new Date().toISOString(),
+          commission_percentage: 0,
+          permissions: ADMIN_PERMISSIONS
+        });
+      }
+
       setUsers(mappedUsers);
     } catch (err: any) {
       console.error('Erro ao buscar usuários:', err);
-      // Fallback para exibir o Super Admin
-      setUsers([{
-        id: 'a0e73455-9526-4cdf-a0f5-7bf47e2e3ce8',
-        nome: 'Caique (Super Admin)',
-        email: 'caique@cmcred.com.br',
-        perfil: 'admin',
-        status: 'active',
-        dataCriacao: new Date().toISOString(),
-        commission_percentage: 0,
-        permissions: ADMIN_PERMISSIONS
-      }]);
     } finally {
       setLoading(false);
     }
@@ -401,8 +410,9 @@ const UsersManager: React.FC = () => {
 
   const toggleStatus = async (id: string, current: UserStatus) => {
     const target = users.find(u => u.id === id);
-    if (target?.email?.toLowerCase() === 'caique@cmcred.com.br') {
-      addNotification('O Super Administrador Principal (Caique) não pode ser bloqueado por segurança.', 'alerta');
+    const targetEmail = target?.email?.toLowerCase() || '';
+    if (targetEmail === 'caique@cmcred.com.br' || targetEmail === 'lucas@teste.com.br') {
+      addNotification('Administradores Gerais não podem ser bloqueados por segurança.', 'alerta');
       return;
     }
 
@@ -417,7 +427,8 @@ const UsersManager: React.FC = () => {
     if (!editingUser) return;
     setLoading(true);
     try {
-      const isSuperAdminUser = editingUser.email.toLowerCase() === 'caique@cmcred.com.br';
+      const isSuperAdminUser = editingUser.email.toLowerCase() === 'caique@cmcred.com.br' || 
+                               editingUser.email.toLowerCase() === 'lucas@teste.com.br';
       const finalRole = isSuperAdminUser ? 'admin' : editingUser.perfil;
       
       // Sanitizar permissões para consultores
@@ -464,8 +475,9 @@ const UsersManager: React.FC = () => {
 
   const handleDeleteUser = async (id: string) => {
     const target = users.find(u => u.id === id);
-    if (target?.email?.toLowerCase() === 'caique@cmcred.com.br') {
-      addNotification('Ação Bloqueada: O Super Administrador Principal (Caique) possui imunidade contra exclusão.', 'alerta');
+    const targetEmail = target?.email?.toLowerCase() || '';
+    if (targetEmail === 'caique@cmcred.com.br' || targetEmail === 'lucas@teste.com.br') {
+      addNotification('Ação Bloqueada: Administradores Gerais possuem imunidade contra exclusão.', 'alerta');
       return;
     }
 
@@ -513,6 +525,7 @@ const UsersManager: React.FC = () => {
   const currentAdminUser = users.find(u => 
     u.id === currentUser?.id || 
     u.email.toLowerCase() === (authUserEmail || '').toLowerCase() ||
+    u.email.toLowerCase() === 'lucas@teste.com.br' ||
     u.email.toLowerCase() === 'caique@cmcred.com.br'
   ) || users.find(u => u.perfil === 'admin') || null;
 
@@ -622,7 +635,7 @@ const UsersManager: React.FC = () => {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.75rem' }}>
           {tabFiltered.map(user => {
-            const isSuperAdminUser = user.email.toLowerCase() === 'caique@cmcred.com.br';
+            const isSuperAdminUser = user.email.toLowerCase() === 'caique@cmcred.com.br' || user.email.toLowerCase() === 'lucas@teste.com.br';
             const isAdminUser = isSuperAdminUser || user.email.toLowerCase().includes('admin') || user.perfil === 'admin';
             const rc = isAdminUser ? roleConfig.admin : (roleConfig[user.perfil] || roleConfig.operator);
             const isActive = user.status === 'active';

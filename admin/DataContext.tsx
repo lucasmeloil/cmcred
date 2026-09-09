@@ -53,6 +53,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { currentUser, authUserEmail } = useAuth();
   const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
                        currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
+                       currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' ||
                        currentUser?.perfil === 'admin';
 
   // Estados em memória (nunca dependentes de snapshot obsoleto de localStorage/sessionStorage)

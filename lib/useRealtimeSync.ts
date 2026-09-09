@@ -41,10 +41,10 @@ export function useRealtimeSync({
 
   const targetTables = tables && tables.length > 0 ? tables : table ? [table] : ['loans'];
 
-  // Executa o refresh seguro evitando sobreposição e requisições excessivas (cooldown 1.5s)
+  // Executa o refresh seguro evitando sobreposição e requisições excessivas (cooldown 1s para silent)
   const triggerRefresh = useCallback(async (isSilent = true) => {
     const now = Date.now();
-    if (isRefreshingRef.current || now - lastRefreshTimeRef.current < 1500) {
+    if (isRefreshingRef.current || (isSilent && now - lastRefreshTimeRef.current < 1000)) {
       return;
     }
     lastRefreshTimeRef.current = now;

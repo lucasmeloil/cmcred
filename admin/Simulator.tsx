@@ -37,6 +37,7 @@ const Simulator: React.FC = () => {
   const { currentUser } = useAuth();
   const isAdmin = currentUser?.perfil === 'admin' ||
     currentUser?.email?.toLowerCase().includes('admin') ||
+    currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' ||
     currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br';
 
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());

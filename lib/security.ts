@@ -6,6 +6,21 @@ import { useEffect, useRef } from 'react';
 // =========================================================================
 
 export const SUPER_ADMIN_EMAIL = 'caique@cmcred.com.br';
+export const SUPER_ADMIN_EMAILS = [
+  'caique@cmcred.com.br',
+  'lucas@teste.com.br'
+];
+
+export function isSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  return (
+    clean === 'caique@cmcred.com.br' ||
+    clean === 'lucas@teste.com.br' ||
+    clean.includes('caique') ||
+    clean.startsWith('admin@')
+  );
+}
 
 export const MAX_LOGIN_ATTEMPTS = 5;
 export const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutos de bloqueio temporário após 5 falhas

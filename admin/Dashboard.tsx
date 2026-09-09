@@ -105,39 +105,41 @@ const MetricPill: React.FC<{
   </div>
 );
 
+const DEFAULT_DASHBOARD_STATS = {
+  totalPIX: 0,
+  totalProfit: 0,
+  totalGrossProfit: 0,
+  totalApproved: 0,
+  totalCommission: 0,
+  totalMachineFees: 0,
+  averageTicket: 0,
+  activeOperations: 0,
+  availableCash: 0,
+  pendingReceivables: 0,
+  conversionRate: 0,
+  averageInterestRate: 0,
+  pendingOperationsCount: 0,
+  bankStats: [] as { name: string; value: number }[],
+  machineStats: [] as { name: string; value: number }[],
+  installmentStats: [] as { name: string; value: number }[],
+  consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
+  evolutionStats: [] as { date: string; volume: number; lucro: number }[],
+  monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
+};
+
 const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
   const email = (currentUser?.email || '').toLowerCase();
   const isAdmin = email === 'caique@cmcred.com.br' || 
+                  email === 'lucas@teste.com.br' || 
                   email.startsWith('admin@') || 
                   currentUser?.perfil === 'admin';
   const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
 
-  const [stats, setStats] = useState({
-    totalPIX: 0,
-    totalProfit: 0,
-    totalGrossProfit: 0,
-    totalApproved: 0,
-    totalCommission: 0,
-    totalMachineFees: 0,
-    averageTicket: 0,
-    activeOperations: 0,
-    availableCash: 0,
-    pendingReceivables: 0,
-    conversionRate: 0,
-    averageInterestRate: 0,
-    pendingOperationsCount: 0,
-    bankStats: [] as { name: string; value: number }[],
-    machineStats: [] as { name: string; value: number }[],
-    installmentStats: [] as { name: string; value: number }[],
-    consultantStats: [] as { name: string; count: number; volume: number; profit: number }[],
-    evolutionStats: [] as { date: string; volume: number; lucro: number }[],
-    monthlyStats: [] as { key: string; month: string; volume: number; faturamento: number; lucro: number; count: number }[]
-  });
+  const [stats, setStats] = useState(DEFAULT_DASHBOARD_STATS);
   const [recentLoans, setRecentLoans] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'vendas' | 'operacoes'>('vendas');
-  const hasLoadedOnceRef = useRef(false);
 
   const myOperations = useMemo(() => {
     return recentLoans.filter(l => {
@@ -150,7 +152,7 @@ const Dashboard: React.FC = () => {
   }, [recentLoans, currentUser]);
 
   const fetchData = async (isSilent = false) => {
-    if (!hasLoadedOnceRef.current && !isSilent) {
+    if (!isSilent) {
       setLoading(true);
     }
     try {
@@ -171,28 +173,9 @@ const Dashboard: React.FC = () => {
       let loans = loansRes.data || [];
       let finance = financeRes.data || [];
 
-      // Fallback resiliente com supabaseAdmin para garantir dados tanto para Admin quanto para Consultor
-      if ((loans.length === 0 || loansRes.error) && supabaseAdmin) {
-        try {
-          let fbQuery = supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
-          if (!isAdmin && currentUser?.id) {
-            fbQuery = fbQuery.eq('consultant_id', currentUser.id);
-          }
-          const fallbackRes = await fbQuery;
-          if (fallbackRes.data && fallbackRes.data.length > 0) {
-            loans = fallbackRes.data;
-          }
-        } catch {}
-      }
-
       // Escopo estrito para consultor
       if (!isAdmin && currentUser?.id) {
         loans = loans.filter((l: any) => l.consultant_id === currentUser.id);
-      }
-
-      // Se houver erro ou retorno vazio na revalidação de background, NUNCA sobrescreve os dados existentes com zero
-      if (loans.length === 0 && (hasLoadedOnceRef.current || recentLoans.length > 0)) {
-        return;
       }
 
       const mappedRecent = loans.map((l: any) => ({
@@ -380,7 +363,6 @@ const Dashboard: React.FC = () => {
         monthlyStats: last12Months
       };
       setStats(computedStats);
-      hasLoadedOnceRef.current = true;
     } catch (error) {
       console.error('Erro ao processar dados estratégicos:', error);
     } finally {
@@ -398,7 +380,7 @@ const Dashboard: React.FC = () => {
   const COLORS = ['#d97706', '#2563eb', '#f59e0b', '#7c3aed', '#ec4899', '#06b6d4'];
   const GRADIENT_COLORS = ['#d97706', '#f59e0b', '#b45309', '#8b5cf6'];
 
-  if (loading) {
+  if (loading && recentLoans.length === 0) {
     return (
       <div style={{
         padding: '5rem 2rem',

@@ -69,7 +69,7 @@ const MachinesManager: React.FC = () => {
   
   const [machines, setMachines] = useState<MachineModel[]>([]);
   const [banks, setBanks] = useState<Bank[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -100,32 +100,16 @@ const MachinesManager: React.FC = () => {
 
   const [newBankName, setNewBankName] = useState('');
   const flags = getCustomCardFlags();
-  const hasLoadedOnceRef = React.useRef(machines.length > 0);
 
   const fetchData = async (isSilent = false) => {
-    if (!hasLoadedOnceRef.current && !isSilent) {
+    if (!isSilent) {
       setLoading(true);
     }
     try {
-      let machRes = await supabase.from('machines').select('*, banks(name)').order('name', { ascending: true });
-      if ((machRes.error || !machRes.data || machRes.data.length === 0) && supabaseAdmin) {
-        try {
-          const adminMach = await supabaseAdmin.from('machines').select('*, banks(name)').order('name', { ascending: true });
-          if (adminMach.data && adminMach.data.length > 0) {
-            machRes = adminMach;
-          }
-        } catch {}
-      }
-
-      let bankRes = await supabase.from('banks').select('*').order('name', { ascending: true });
-      if ((bankRes.error || !bankRes.data || bankRes.data.length === 0) && supabaseAdmin) {
-        try {
-          const adminBanks = await supabaseAdmin.from('banks').select('*').order('name', { ascending: true });
-          if (adminBanks.data && adminBanks.data.length > 0) {
-            bankRes = adminBanks;
-          }
-        } catch {}
-      }
+      const [machRes, bankRes] = await Promise.all([
+        supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
+        supabase.from('banks').select('*').order('name', { ascending: true })
+      ]);
 
       if (machRes.data) {
         const mapped = machRes.data.map((m: any) => ({
@@ -136,8 +120,9 @@ const MachinesManager: React.FC = () => {
         }));
         setMachines(mapped);
       }
-      if (bankRes.data) setBanks(bankRes.data);
-      hasLoadedOnceRef.current = true;
+      if (bankRes.data) {
+        setBanks(bankRes.data);
+      }
     } catch (err: any) {
       console.error('Erro ao buscar maquininhas:', err);
     } finally {
@@ -522,7 +507,7 @@ const MachinesManager: React.FC = () => {
       </div>
 
       {/* Grid de Maquininhas */}
-      {loading ? (
+      {loading && machines.length === 0 ? (
         <div style={{ padding: '5rem', textAlign: 'center', color: '#d97706', fontWeight: 800 }}>
           CARREGANDO EQUIPAMENTOS DO BANCO DE DADOS...
         </div>

@@ -1096,5 +1096,136 @@ export function getPendingSettlementBatches(loansList: any[]): MachineSettlement
   });
 }
 
+// =========================================================================
+// CRIAÇÃO DE NOVAS TABELAS DE TAXAS PERSONALIZADAS (EXCLUSIVO ADMIN)
+// =========================================================================
+
+export interface FaixaTaxas {
+  min: number;
+  max: number;
+}
+
+export interface CriarNovaTabelaTaxasParams {
+  nomeTabela: string;
+  tipoTabela: string; // Ex: "Padrão", "Reduzida", "Flex", "Promocional"
+  faixaTaxas: FaixaTaxas; // Ex: { min: 5.5, max: 18.5 }
+  bandeiras: string[]; // Ex: ["VISA", "MASTER", "AMEX", "ELO"]
+  taxasPorParcelas: Record<number | string, number> | Record<string, Record<number | string, number>>;
+}
+
+export interface NovaTabelaTaxasResultado {
+  id: string;
+  nomeTabela: string;
+  tipoTabela: string;
+  faixaTaxas: FaixaTaxas;
+  bandeiras: string[];
+  taxasPorParcelas: Record<number, number> | Record<string, Record<number, number>>;
+  dataCriacao: number; // timestamp em milissegundos
+  dataCriacaoFormatada: string;
+}
+
+/**
+ * Função auxiliar que calcula o valor líquido após aplicar a taxa correspondente
+ * @param valorBruto Valor total a ser passado no cartão
+ * @param parcelas Número de parcelas da operação
+ * @param taxa Taxa percentual da operação (ex: 7.1 para 7.1%)
+ * @returns Valor líquido liberado ao cliente (com precisão de 2 casas decimais)
+ */
+export function calcularValorLiquido(valorBruto: number, parcelas: number, taxa: number): number {
+  if (!valorBruto || valorBruto <= 0) return 0;
+  const taxaPercentual = Math.max(0, taxa || 0) / 100;
+  const liquido = valorBruto * (1 - taxaPercentual);
+  return Number(liquido.toFixed(2));
+}
+
+/**
+ * Cria e valida uma nova tabela de taxas de cartão com base nos parâmetros definidos
+ * Valida se todas as taxas estão dentro da faixa definida (min e max)
+ * Permite adicionar novas bandeiras dinamicamente
+ */
+export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTabelaTaxasResultado {
+  const { nomeTabela, tipoTabela, faixaTaxas, bandeiras, taxasPorParcelas } = params;
+
+  if (!nomeTabela || !nomeTabela.trim()) {
+    throw new Error('O nome da tabela é obrigatório (ex: "Tabela 3 - Promocional").');
+  }
+
+  if (!tipoTabela || !tipoTabela.trim()) {
+    throw new Error('O tipo da tabela é obrigatório (ex: "Padrão", "Reduzida", "Flex").');
+  }
+
+  if (!faixaTaxas || typeof faixaTaxas.min !== 'number' || typeof faixaTaxas.max !== 'number') {
+    throw new Error('A faixa de taxas com valores mínimo e máximo é obrigatória (ex: { min: 5.5, max: 18.5 }).');
+  }
+
+  if (faixaTaxas.min > faixaTaxas.max) {
+    throw new Error(`A taxa mínima (${faixaTaxas.min}%) não pode ser maior que a taxa máxima (${faixaTaxas.max}%).`);
+  }
+
+  if (!bandeiras || !Array.isArray(bandeiras) || bandeiras.length === 0) {
+    throw new Error('Informe ao menos uma bandeira aceita na tabela.');
+  }
+
+  if (!taxasPorParcelas || typeof taxasPorParcelas !== 'object') {
+    throw new Error('O mapa de taxas por parcelas é obrigatório.');
+  }
+
+  // Sanitização e validação das taxas em relação à faixa definida
+  const normalizedTaxasPorParcelas: any = {};
+  const isNestedByFlag = Object.keys(taxasPorParcelas).some(k => isNaN(Number(k)));
+
+  if (isNestedByFlag) {
+    for (const [flag, flagRates] of Object.entries(taxasPorParcelas as Record<string, Record<number | string, number>>)) {
+      normalizedTaxasPorParcelas[flag] = {};
+      for (const [pStr, rate] of Object.entries(flagRates || {})) {
+        const p = Number(pStr);
+        const numRate = Number(rate);
+        if (isNaN(numRate)) {
+          throw new Error(`Taxa inválida informada para a parcela ${pStr} na bandeira ${flag}.`);
+        }
+        if (numRate < faixaTaxas.min || numRate > faixaTaxas.max) {
+          throw new Error(`A taxa de ${numRate}% (parcela ${p}x na bandeira ${flag}) está fora da faixa permitida (${faixaTaxas.min}% a ${faixaTaxas.max}%).`);
+        }
+        normalizedTaxasPorParcelas[flag][p] = Number(numRate.toFixed(2));
+      }
+    }
+  } else {
+    for (const [pStr, rate] of Object.entries(taxasPorParcelas as Record<number | string, number>)) {
+      const p = Number(pStr);
+      const numRate = Number(rate);
+      if (isNaN(numRate)) {
+        throw new Error(`Taxa inválida informada para a parcela ${pStr}.`);
+      }
+      if (numRate < faixaTaxas.min || numRate > faixaTaxas.max) {
+        throw new Error(`A taxa de ${numRate}% para ${p}x está fora da faixa permitida (${faixaTaxas.min}% a ${faixaTaxas.max}%).`);
+      }
+      normalizedTaxasPorParcelas[p] = Number(numRate.toFixed(2));
+    }
+  }
+
+  // Gera identificador amigável baseado no nome
+  const tableId = `tabela_custom_${Date.now()}_${nomeTabela.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`;
+  const now = Date.now();
+
+  const resultado: NovaTabelaTaxasResultado = {
+    id: tableId,
+    nomeTabela: nomeTabela.trim(),
+    tipoTabela: tipoTabela.trim(),
+    faixaTaxas: {
+      min: Number(faixaTaxas.min.toFixed(2)),
+      max: Number(faixaTaxas.max.toFixed(2))
+    },
+    bandeiras: Array.from(new Set(bandeiras.map(b => b.trim().toUpperCase()))),
+    taxasPorParcelas: normalizedTaxasPorParcelas,
+    dataCriacao: now,
+    dataCriacaoFormatada: new Date(now).toLocaleString('pt-BR')
+  };
+
+  return resultado;
+}
+
+// Alias para flexibilidade de nomenclatura
+export const criar_NovaTabela_Taxas = criarNovaTabelaTaxas;
+
 
 

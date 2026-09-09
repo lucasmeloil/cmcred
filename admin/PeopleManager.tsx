@@ -14,14 +14,14 @@ import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 const PeopleManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm, isSuperAdmin, canDeleteRecords } = useAuth();
   const [people, setPeople] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [pixValidation, setPixValidation] = useState<PixValidationResult | null>(null);
   const [copiedPixId, setCopiedPixId] = useState<string | null>(null);
-  
+
   // Responsividade adaptativa
   const [isMobile, setIsMobile] = useState<boolean>(typeof window !== 'undefined' ? window.innerWidth < 900 : false);
 
@@ -61,24 +61,14 @@ const PeopleManager: React.FC = () => {
       setLoading(true);
     }
     try {
-      let { data, error } = await supabase
+      const { data, error } = await supabase
         .from('customers')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if ((error || !data || data.length === 0) && supabaseAdmin) {
-        const adminRes = await supabaseAdmin
-          .from('customers')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (adminRes.data && adminRes.data.length > 0) {
-          data = adminRes.data;
-          error = null;
-        }
-      }
-
-      if (error) throw error;
-      if (data) {
+      if (error) {
+        console.error('Erro ao buscar clientes:', error);
+      } else if (data) {
         setPeople(data);
       }
     } catch (err) {
@@ -218,17 +208,11 @@ const PeopleManager: React.FC = () => {
       return;
     }
 
-    // Validação obrigatória da Chave PIX para clientes
+    // Validação da Chave PIX para clientes
     if (formData.person_type === 'customer') {
       const rawPix = (formData.pix_key || '').trim();
       if (!rawPix) {
         addNotification('A Chave PIX é obrigatória para o cadastro do cliente.', 'alerta');
-        return;
-      }
-
-      const check = validatePixKey(rawPix);
-      if (!check.isValid) {
-        addNotification(`Chave PIX inválida: ${check.error || 'formato incorreto'}`, 'alerta');
         return;
       }
     }
@@ -237,12 +221,21 @@ const PeopleManager: React.FC = () => {
     const rawCep = (formData.cep || '').replace(/\D/g, '');
     const cleanCepVal = !rawCep || rawCep === '00000000' ? null : (formData.cep?.trim() || null);
 
+    // Sanitização e tratamento de Chave PIX
+    let cleanPix = formData.pix_key?.trim() || null;
+    if (cleanPix) {
+      const check = validatePixKey(cleanPix);
+      if (check.isValid && check.formatted) {
+        cleanPix = check.formatted;
+      }
+    }
+
     const payload = {
       name: formData.name?.trim(),
       cpf: formData.cpf?.trim() || null,
       phone: formData.phone?.trim() || null,
       email: formData.email?.trim() || null,
-      pix_key: formData.pix_key?.trim() || null,
+      pix_key: cleanPix,
       notes: formData.notes?.trim() || null,
       status: formData.status || 'active',
       person_type: formData.person_type || 'customer',
@@ -318,14 +311,13 @@ const PeopleManager: React.FC = () => {
     let { error } = await supabase.from('customers').delete().eq('id', id);
 
     if (error && supabaseAdmin) {
-      console.warn('Fallback com supabaseAdmin na exclusão de cliente:', error.message);
       const adminRes = await supabaseAdmin.from('customers').delete().eq('id', id);
       error = adminRes.error;
     }
 
     if (!error) {
       await logAudit('exclusão', `Cadastro de ${personName} removido do sistema.`);
-      addNotification(`Cadastro removido com sucesso.`, 'info');
+      addNotification('Cadastro excluído com sucesso.', 'sucesso');
       fetchPeople();
     } else {
       addNotification('Erro ao excluir: ' + error.message, 'alerta');
@@ -410,37 +402,38 @@ const PeopleManager: React.FC = () => {
 
   return (
     <div style={{ padding: isMobile ? '1.25rem' : '2.5rem' }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '2.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-          <div>
-            <h1 style={{ color: '#0f172a', fontSize: isMobile ? '1.5rem' : '2rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Users size={isMobile ? 26 : 32} color="#d97706" /> Gestão de Clientes & Pessoas
-            </h1>
-            <p style={{ color: '#64748b', marginTop: '0.5rem', fontWeight: 500, fontSize: isMobile ? '0.85rem' : '0.95rem' }}>
-              Administre a base de clientes com endereço completo integrado à API de CEP e Chave Pix validada para repasses.
-            </p>
-          </div>
-          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+      {/* Barra de Ações Superior (Integrada com o Topbar) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
+        <div>
+          <h2 style={{ color: '#0f172a', fontSize: isMobile ? '1.25rem' : '1.5rem', margin: 0, fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <Users size={isMobile ? 22 : 26} color="#d97706" /> Base de Clientes & Portadores
+          </h2>
+          <p style={{ color: '#64748b', marginTop: '0.35rem', fontWeight: 500, fontSize: isMobile ? '0.8rem' : '0.9rem' }}>
+            Consulte e gerencie portadores com endereço completo integrado e Chave Pix para repasses.
+          </p>
         </div>
-        <button 
-          className="action-button"
-          onClick={() => {
-            setFormData(initialPerson);
-            setPixValidation(null);
-            setCepStatus(null);
-            setEditingId(null);
-            setShowForm(true);
-          }}
-          style={{ 
-            background: '#d97706', color: '#fff', border: 'none', 
-            padding: '0.85rem 1.75rem', borderRadius: '14px', fontWeight: 700, 
-            cursor: 'pointer', boxShadow: '0 10px 15px -3px rgba(217,119,6,0.2)', 
-            display: 'flex', alignItems: 'center', gap: '0.5rem', whiteSpace: 'nowrap',
-            width: isMobile ? '100%' : 'auto', justifyContent: 'center'
-          }}
-        >
-          <UserPlus size={20} /> Cadastrar Cliente
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <RealtimeStatusBadge status={syncStatus} lastSyncTime={lastSyncTime} onRefresh={forceSync} />
+          <button 
+            className="action-button"
+            onClick={() => {
+              setFormData(initialPerson);
+              setPixValidation(null);
+              setCepStatus(null);
+              setEditingId(null);
+              setShowForm(true);
+            }}
+            style={{ 
+              background: '#d97706', color: '#fff', border: 'none', 
+              padding: '0.85rem 1.75rem', borderRadius: '14px', fontWeight: 700, 
+              cursor: 'pointer', boxShadow: '0 10px 15px -3px rgba(217,119,6,0.2)', 
+              display: 'flex', alignItems: 'center', gap: '0.5rem', whiteSpace: 'nowrap',
+              width: isMobile ? '100%' : 'auto', justifyContent: 'center'
+            }}
+          >
+            <UserPlus size={20} /> Cadastrar Cliente
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '2rem' }}>
@@ -468,7 +461,7 @@ const PeopleManager: React.FC = () => {
       </div>
 
       <div style={{ background: '#ffffff', borderRadius: '24px', border: '1px solid #f1f5f9', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
-        {loading ? (
+        {loading && people.length === 0 ? (
           <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b', fontWeight: 600 }}>Carregando cadastros...</div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b', fontWeight: 600 }}>Nenhum cadastro encontrado.</div>

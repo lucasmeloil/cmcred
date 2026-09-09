@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import {
   SUPER_ADMIN_EMAIL,
+  SUPER_ADMIN_EMAILS,
+  isSuperAdminEmail,
   checkLoginRateLimit,
   recordFailedLogin,
   clearLoginAttempts
@@ -101,9 +103,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lastProfileFetchTimeRef.current = now;
 
     try {
-      const isSuperAdminFallback = fallbackEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+      const isSuperAdminFallback = fallbackEmail?.toLowerCase() === 'caique@cmcred.com.br' ||
+        fallbackEmail?.toLowerCase() === 'lucas@teste.com.br' ||
         fallbackEmail?.toLowerCase().includes('caique') ||
-        fallbackEmail?.toLowerCase() === 'caique@cmcred.com.br';
+        fallbackEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+        isSuperAdminEmail(fallbackEmail);
 
       const { data, error } = await supabase
         .from('profiles')
@@ -113,9 +117,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const email = data?.email || fallbackEmail || (currentUserRef.current?.email) || '';
       const isSuperAdmin = isSuperAdminFallback ||
-        email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+        email.toLowerCase() === 'caique@cmcred.com.br' ||
+        email.toLowerCase() === 'lucas@teste.com.br' ||
         email.toLowerCase().includes('caique') ||
-        email.toLowerCase() === 'caique@cmcred.com.br';
+        email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+        isSuperAdminEmail(email) ||
+        data?.role === 'admin';
 
       const isAdminUser = isSuperAdmin ||
         email.toLowerCase().includes('admin') ||
@@ -141,9 +148,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       })();
 
+      const isLucas = email.toLowerCase().includes('lucas');
+      const isCaique = email.toLowerCase().includes('caique');
+
       const userToSet: AdminUser = {
         id: userId,
-        nome: isSuperAdmin ? 'Caique' : (data?.full_name || email.split('@')[0]),
+        nome: data?.full_name || (isLucas ? 'Lucas (Admin Geral)' : (isCaique ? 'Caique (Super Admin)' : (isSuperAdmin ? 'Administrador CM CRED' : email.split('@')[0]))),
         email: email,
         perfil: (isSuperAdmin || isAdminUser) ? 'admin' : ((data?.role as any) || 'consultant'),
         status: isSuperAdmin ? 'active' : ((data?.status as any) || 'active'),
@@ -176,12 +186,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Error fetching profile, using fallback:', err);
       if (fallbackEmail || currentUserRef.current?.email) {
         const targetEmail = fallbackEmail || currentUserRef.current?.email || '';
-        const isSuperAdminFallback = targetEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+        const isSuperAdminFallback = targetEmail.toLowerCase() === 'caique@cmcred.com.br' ||
+          targetEmail.toLowerCase() === 'lucas@teste.com.br' ||
           targetEmail.toLowerCase().includes('caique') ||
-          targetEmail.toLowerCase() === 'caique@cmcred.com.br';
+          targetEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
+          isSuperAdminEmail(targetEmail);
+        const isTargetLucas = targetEmail.toLowerCase().includes('lucas');
+        const isTargetCaique = targetEmail.toLowerCase().includes('caique') || targetEmail.toLowerCase() === 'caique@cmcred.com.br';
         const fallbackUser: AdminUser = {
           id: userId,
-          nome: isSuperAdminFallback ? 'Caique' : targetEmail.split('@')[0],
+          nome: isTargetCaique ? 'Caique (Super Admin)' : (isTargetLucas ? 'Lucas (Admin Geral)' : (isSuperAdminFallback ? 'Administrador CM CRED' : targetEmail.split('@')[0])),
           email: targetEmail,
           perfil: isSuperAdminFallback ? 'admin' : 'consultant',
           status: 'active',
@@ -293,7 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
-    // Revalidação proativa de sessão ao retornar para a aba (visibilitychange e focus)
+    // Revalidação suave de sessão ao retornar para a aba (visibilitychange e focus)
     const handleVisibilityChange = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && isMounted) {
         try {
@@ -301,16 +315,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (activeSession?.user) {
             setSession(activeSession);
             activeSessionUserIdRef.current = activeSession.user.id;
-            const expiresAt = activeSession.expires_at || 0;
-            const nowSec = Math.floor(Date.now() / 1000);
-            if (expiresAt - nowSec < 300) {
-              const { data: refreshed } = await supabase.auth.refreshSession();
-              if (refreshed?.session?.user) {
-                setSession(refreshed.session);
-                activeSessionUserIdRef.current = refreshed.session.user.id;
-                await fetchProfile(refreshed.session.user.id, refreshed.session.user.email);
-              }
-            } else if (!currentUserRef.current) {
+            if (!currentUserRef.current) {
               await fetchProfile(activeSession.user.id, activeSession.user.email);
             }
           }
@@ -321,11 +326,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
 
     return () => {
       isMounted = false;
       clearTimeout(safetyTimer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
       subscription.unsubscribe();
       supabase.removeChannel(profileChannel);
     };
@@ -442,13 +449,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const emailLower = (currentUser?.email || session?.user?.email || '').toLowerCase();
   const isSuperAdmin = emailLower === 'caique@cmcred.com.br' ||
+                       emailLower === 'lucas@teste.com.br' ||
                        emailLower.includes('caique') ||
                        emailLower.startsWith('admin@') ||
+                       isSuperAdminEmail(emailLower) ||
                        currentUser?.perfil === 'admin';
   const isConsultant = !isSuperAdmin && currentUser?.perfil === 'consultant';
 
   const canAccessSection = useCallback((sec: string): boolean => {
-    if (isSuperAdmin) return true;
+    if (isSuperAdmin || currentUser?.perfil === 'admin') return true;
     if (!currentUser) return false;
     const perms = (currentUser?.permissions || {}) as any;
 
@@ -458,30 +467,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'novo_emprestimo': return Boolean(perms.create_loan || perms.novo_emprestimo);
       case 'pessoas': return Boolean(perms.customers || perms.pessoas);
       case 'solicitacoes': return Boolean(perms.loans || perms.solicitacoes);
-      case 'maquininhas': return !isConsultant && Boolean(perms.machines || perms.maquininhas);
-      case 'bandeiras': return !isConsultant && Boolean(perms.card_flags);
-      case 'taxas_simulador': return !isConsultant && Boolean(perms.taxas_simulador || perms.card_flags);
-      case 'financeiro': return !isConsultant && Boolean(perms.finance || perms.financeiro);
-      case 'relatorios': return !isConsultant && Boolean(perms.reports || perms.relatorios);
-      case 'usuarios': return isSuperAdmin;
-      case 'logs': return isSuperAdmin;
+      case 'maquininhas': return Boolean(perms.machines || perms.maquininhas);
+      case 'bandeiras': return Boolean(perms.card_flags);
+      case 'taxas_simulador': return Boolean(perms.taxas_simulador || perms.card_flags);
+      case 'financeiro': return Boolean(perms.finance || perms.financeiro);
+      case 'relatorios': return Boolean(perms.reports || perms.relatorios);
+      case 'usuarios': return false; // Restrito exclusivamente para Admin
+      case 'logs': return false; // Restrito exclusivamente para Admin
       case 'tutoriais': return true;
       default: return false;
     }
-  }, [isSuperAdmin, isConsultant, currentUser]);
+  }, [isSuperAdmin, currentUser]);
 
   const hasPermission = useCallback((key: keyof UserPermissions): boolean => {
-    if (isSuperAdmin) return true;
+    if (isSuperAdmin || currentUser?.perfil === 'admin') return true;
     if (!currentUser) return false;
     return Boolean(currentUser.permissions?.[key]);
   }, [isSuperAdmin, currentUser]);
 
-  const canApproveLoans = isSuperAdmin || (currentUser?.perfil === 'manager');
-  const canDeleteLoans = isSuperAdmin || Boolean(currentUser?.permissions?.delete_loans);
-  const canManageMachines = isSuperAdmin || (!isConsultant && Boolean(currentUser?.permissions?.machines || (currentUser?.permissions as any)?.maquininhas));
-  const canEditRates = isSuperAdmin || (!isConsultant && Boolean(currentUser?.permissions?.taxas_simulador || (currentUser?.permissions as any)?.card_flags));
-  const canDeleteRecords = isSuperAdmin;
-  const canManageUsers = isSuperAdmin;
+  const canApproveLoans = isSuperAdmin || (currentUser?.perfil === 'admin') || (currentUser?.perfil === 'manager');
+  const canDeleteLoans = isSuperAdmin || (currentUser?.perfil === 'admin') || Boolean(currentUser?.permissions?.delete_loans);
+  const canManageMachines = isSuperAdmin || (currentUser?.perfil === 'admin') || Boolean(currentUser?.permissions?.machines || (currentUser?.permissions as any)?.maquininhas);
+  const canEditRates = isSuperAdmin || (currentUser?.perfil === 'admin') || Boolean(currentUser?.permissions?.taxas_simulador);
+  const canDeleteRecords = isSuperAdmin || (currentUser?.perfil === 'admin');
+  const canManageUsers = isSuperAdmin || (currentUser?.perfil === 'admin');
 
   return (
     <AuthContext.Provider value={{

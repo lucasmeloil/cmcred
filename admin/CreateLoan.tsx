@@ -46,6 +46,7 @@ const CreateLoan: React.FC = () => {
   const { currentUser, addNotification, logAudit } = useAuth();
   const email = currentUser?.email?.toLowerCase() || '';
   const isAdmin = email === 'caique@cmcred.com.br' ||
+    email === 'lucas@teste.com.br' ||
     email.includes('caique') ||
     email.includes('admin') ||
     currentUser?.perfil === 'admin';

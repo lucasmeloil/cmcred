@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
@@ -62,7 +63,7 @@ const ReportsManager: React.FC = () => {
   const [loans, setLoans] = useState<any[]>([]);
   const [finance, setFinance] = useState<any[]>([]);
   const [consultants, setConsultants] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   // Filters State
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('month');
@@ -72,11 +73,9 @@ const ReportsManager: React.FC = () => {
   const [consultantFilter, setConsultantFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const hasLoadedOnceRef = React.useRef(loans.length > 0);
-
   // Fetch initial data
   const fetchData = useCallback(async (isSilent = false) => {
-    if (!hasLoadedOnceRef.current && !isSilent) {
+    if (!isSilent) {
       setLoading(true);
     }
     try {
@@ -101,17 +100,15 @@ const ReportsManager: React.FC = () => {
       if (financeRes.data) {
         setFinance(financeRes.data);
       }
-      if (profilesRes.data) setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
-      hasLoadedOnceRef.current = true;
+      if (profilesRes.data) {
+        setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
+      }
     } catch (err: any) {
       console.error('Erro ao buscar dados do relatório:', err);
-      if (!hasLoadedOnceRef.current) {
-        addNotification('Erro ao carregar dados: ' + err.message, 'alerta');
-      }
     } finally {
       setLoading(false);
     }
-  }, [addNotification, isSuperAdmin, currentUser?.id]);
+  }, [isSuperAdmin, currentUser?.id]);
 
   // Sincronização em tempo real inteligente com Auto-Heal e re-fetch
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
@@ -845,7 +842,7 @@ const ReportsManager: React.FC = () => {
           </div>
         </div>
 
-        {loading ? (
+        {loading && loans.length === 0 ? (
           <div style={{ padding: '5rem', textAlign: 'center', color: '#d97706', fontWeight: 800, fontSize: '1.1rem' }}>
             CARREGANDO PLANILHA DE OPERAÇÕES...
           </div>

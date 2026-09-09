@@ -42,12 +42,13 @@ const Financeiro: React.FC = () => {
   
   const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
                        currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
+                       currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' || 
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 
   const [data, setData] = useState<FinanceEntry[]>([]);
   const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [syncing, setSyncing] = useState(false);
   
   // Modais de cadastro manual
@@ -75,17 +76,14 @@ const Financeiro: React.FC = () => {
   const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [historyOriginFilter, setHistoryOriginFilter] = useState<'all' | 'loan' | 'manual'>('all');
 
-  const hasLoadedOnceRef = React.useRef(data.length > 0 || loans.length > 0);
-
-  // Buscar dados integrados do Supabase com proteção de persistência total
+  // Buscar dados integrados do Supabase
   const fetchData = useCallback(async (isSilent = false) => {
     try {
-      if (!hasLoadedOnceRef.current && !isSilent) {
+      if (!isSilent) {
         setLoading(true);
       }
       
       let financeQuery = supabase.from('finance').select('*').order('due_date', { ascending: false });
-      // Carrega todas as operações da empresa (feitas pelo consultor, outros consultores e admin)
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
 
       const now = new Date();
@@ -112,52 +110,11 @@ const Financeiro: React.FC = () => {
 
       const [financeRes, loansRes] = await Promise.all([financeQuery, loansQuery]);
 
-      let rawFinance = financeRes.data || [];
-      let rawLoans = loansRes.data || [];
-
-      // Fallback resiliente com supabaseAdmin para evitar RLS/token latency ao voltar de aba
-      if ((rawLoans.length === 0 || rawFinance.length === 0) && supabaseAdmin) {
-        try {
-          if (rawLoans.length === 0) {
-            let adminLoansQuery = supabaseAdmin.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
-            if (dateRange === 'month') {
-              const monthAgoStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-              adminLoansQuery = adminLoansQuery.gte('created_at', monthAgoStr);
-            }
-            const fallbackLoansRes = await adminLoansQuery;
-            if (fallbackLoansRes.data && fallbackLoansRes.data.length > 0) {
-              rawLoans = fallbackLoansRes.data;
-            }
-          }
-          if (rawFinance.length === 0) {
-            let adminFinanceQuery = supabaseAdmin.from('finance').select('*').order('due_date', { ascending: false });
-            if (dateRange === 'month') {
-              const monthAgoStr = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-              adminFinanceQuery = adminFinanceQuery.gte('due_date', monthAgoStr);
-            }
-            const fallbackFinanceRes = await adminFinanceQuery;
-            if (fallbackFinanceRes.data && fallbackFinanceRes.data.length > 0) {
-              rawFinance = fallbackFinanceRes.data;
-            }
-          }
-        } catch {}
+      if (financeRes.data) {
+        setData(financeRes.data);
       }
-
-      if (financeRes.error || loansRes.error) {
-        if (financeRes.error) console.warn('Aviso financeiro:', financeRes.error.message);
-        if (loansRes.error) console.warn('Aviso loans:', loansRes.error.message);
-        if (hasLoadedOnceRef.current) return;
-      }
-      if ((rawFinance.length === 0 || rawLoans.length === 0) && hasLoadedOnceRef.current && (data.length > 0 || loans.length > 0)) {
-        return;
-      }
-
-      // REGRA DE OURO: Nunca apague dados válidos existentes na tela durante atualização de background
-      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
-        setData(rawFinance);
-      }
-      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
-        const mappedLoans = rawLoans.map((l: any) => ({
+      if (loansRes.data) {
+        const mappedLoans = loansRes.data.map((l: any) => ({
           ...l,
           lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
           bank_name: l.banks?.name,
@@ -165,16 +122,12 @@ const Financeiro: React.FC = () => {
         }));
         setLoans(mappedLoans);
       }
-      hasLoadedOnceRef.current = true;
     } catch (err: any) {
       console.error('Erro ao buscar dados financeiros:', err);
-      if (!hasLoadedOnceRef.current) {
-        addNotification('Erro ao carregar dados financeiros: ' + err.message, 'alerta');
-      }
     } finally {
       setLoading(false);
     }
-  }, [dateRange, customRange, isSuperAdmin, currentUser?.id, addNotification]);
+  }, [dateRange, customRange]);
 
   // Sincronização em tempo real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({

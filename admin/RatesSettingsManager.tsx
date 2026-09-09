@@ -40,7 +40,10 @@ import {
   DEFAULT_CARD_RATES,
   type CardFlagOption,
   type RateTableType,
-  TABLE_OPTIONS
+  TABLE_OPTIONS,
+  criarNovaTabelaTaxas,
+  calcularValorLiquido,
+  type NovaTabelaTaxasResultado
 } from '../lib/rates';
 import { RateInput } from './RateInput';
 
@@ -55,6 +58,33 @@ const RatesSettingsManager: React.FC = () => {
 
   // Tabela selecionada: 'tabela_1' ou 'tabela_2'
   const [activeTable, setActiveTable] = useState<RateTableType>('tabela_1');
+
+  // Estados para Criação de Nova Tabela (Apenas Administrador)
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>(() => {
+    try {
+      const stored = localStorage.getItem('cmcred_custom_tables_v1');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [newTableForm, setNewTableForm] = useState({
+    nomeTabela: '',
+    tipoTabela: 'Flex',
+    minTaxa: 5.5,
+    maxTaxa: 18.5,
+    bandeiras: ['VISA', 'MASTER', 'AMEX', 'ELO'],
+    newFlagName: '',
+    taxasPorParcelas: {
+      1: 7.10, 2: 8.25, 3: 8.75, 4: 9.50, 5: 9.99, 6: 10.75,
+      7: 11.25, 8: 11.75, 9: 12.25, 10: 12.99, 11: 13.75, 12: 14.49,
+      13: 15.50, 14: 16.00, 15: 16.80, 16: 17.50, 17: 18.00, 18: 18.50
+    } as Record<number, number>,
+    simGrossAmount: 1000,
+    simInstallment: 10
+  });
 
   // Estados de Taxas
   const [ratesT1, setRatesT1] = useState<Record<string, Record<number, number>>>(getCustomCardRates('tabela_1'));
@@ -299,6 +329,75 @@ const RatesSettingsManager: React.FC = () => {
     }
   };
 
+  // Adicionar nova bandeira dinamicamente à nova tabela
+  const handleAddFlagToNewTable = () => {
+    if (!newTableForm.newFlagName.trim()) return;
+    const clean = newTableForm.newFlagName.trim().toUpperCase();
+    if (newTableForm.bandeiras.includes(clean)) {
+      addNotification('Esta bandeira já consta na lista da tabela.', 'alerta');
+      return;
+    }
+    setNewTableForm(prev => ({
+      ...prev,
+      bandeiras: [...prev.bandeiras, clean],
+      newFlagName: ''
+    }));
+    addNotification(`Bandeira ${clean} adicionada!`, 'sucesso');
+  };
+
+  const handleRemoveFlagFromNewTable = (flagToRemove: string) => {
+    if (newTableForm.bandeiras.length <= 1) {
+      addNotification('A tabela deve conter ao menos uma bandeira.', 'alerta');
+      return;
+    }
+    setNewTableForm(prev => ({
+      ...prev,
+      bandeiras: prev.bandeiras.filter(b => b !== flagToRemove)
+    }));
+  };
+
+  const handleRateChangeInNewTable = (installment: number, val: number) => {
+    setNewTableForm(prev => ({
+      ...prev,
+      taxasPorParcelas: {
+        ...prev.taxasPorParcelas,
+        [installment]: val
+      }
+    }));
+  };
+
+  // Função central para Criar Nova Tabela de Taxas (Exclusivo Administrador)
+  const handleCriarNovaTabela = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!isSuperAdmin) {
+      addNotification('Permissão negada: Consultores não podem criar novas tabelas de taxas. Acesso exclusivo ao Administrador.', 'alerta');
+      return;
+    }
+
+    try {
+      const resultado = criarNovaTabelaTaxas({
+        nomeTabela: newTableForm.nomeTabela,
+        tipoTabela: newTableForm.tipoTabela,
+        faixaTaxas: { min: Number(newTableForm.minTaxa), max: Number(newTableForm.maxTaxa) },
+        bandeiras: newTableForm.bandeiras,
+        taxasPorParcelas: newTableForm.taxasPorParcelas
+      });
+
+      const updated = [...customTables, resultado];
+      setCustomTables(updated);
+      try {
+        localStorage.setItem('cmcred_custom_tables_v1', JSON.stringify(updated));
+      } catch {}
+
+      addNotification(`Nova tabela "${resultado.nomeTabela}" (${resultado.tipoTabela}) criada e validada com sucesso!`, 'sucesso');
+      logAudit('criação_tabela_taxas', `Nova tabela de taxas "${resultado.nomeTabela}" criada pelo Administrador.`);
+      setShowCreateModal(false);
+      setNewTableForm(prev => ({ ...prev, nomeTabela: '' }));
+    } catch (err: any) {
+      addNotification('Validação falhou: ' + err.message, 'alerta');
+    }
+  };
+
   // Simulação de teste em tempo real com as taxas ativas
   const testSimulation = useMemo(() => {
     const currentRate = currentRates[selectedFlagKey]?.[testInstallments] ?? 0;
@@ -397,6 +496,30 @@ const RatesSettingsManager: React.FC = () => {
               >
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Recarregar
               </button>
+
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(true)}
+                  style={{
+                    padding: '0.85rem 1.4rem',
+                    background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '14px',
+                    fontWeight: 800,
+                    fontSize: '0.9rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    boxShadow: '0 4px 12px rgba(217, 119, 6, 0.25)'
+                  }}
+                  title="Criar Nova Tabela de Taxas (Exclusivo Administrador)"
+                >
+                  <Plus size={18} /> Criar Nova Tabela
+                </button>
+              )}
 
               {isAdmin && (
                 <>
@@ -515,7 +638,7 @@ const RatesSettingsManager: React.FC = () => {
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#0f172a', fontSize: '0.85rem', fontWeight: 800, marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               <Sliders size={16} color="#d97706" /> Tabela de Taxas em Edição:
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', maxWidth: '700px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', maxWidth: '1000px' }}>
               {TABLE_OPTIONS.map(opt => {
                 const isSelected = activeTable === opt.id;
                 return (
@@ -547,6 +670,54 @@ const RatesSettingsManager: React.FC = () => {
                   </button>
                 );
               })}
+
+              {/* Tabelas Personalizadas Criadas pelo Administrador */}
+              {customTables.map(ct => (
+                <div
+                  key={ct.id}
+                  style={{
+                    padding: '1rem 1.25rem',
+                    borderRadius: '16px',
+                    border: '2px solid #fed7aa',
+                    background: '#fffbeb',
+                    color: '#9a3412',
+                    textAlign: 'left',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.3rem',
+                    boxShadow: '0 2px 8px rgba(217, 119, 6, 0.08)'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '1.05rem', fontWeight: 900 }}>{ct.nomeTabela}</span>
+                    <span style={{ fontSize: '0.7rem', background: '#ffedd5', color: '#c2410c', padding: '2px 8px', borderRadius: '12px', fontWeight: 800 }}>
+                      {ct.tipoTabela}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#b45309' }}>
+                    Faixa: {ct.faixaTaxas.min}% a {ct.faixaTaxas.max}% • {ct.bandeiras.join(', ')}
+                  </span>
+                  <div style={{ fontSize: '0.75rem', color: '#9a3412', marginTop: '0.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Criada em: {ct.dataCriacaoFormatada}</span>
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Excluir a tabela "${ct.nomeTabela}"?`)) {
+                            const filtered = customTables.filter(t => t.id !== ct.id);
+                            setCustomTables(filtered);
+                            localStorage.setItem('cmcred_custom_tables_v1', JSON.stringify(filtered));
+                            addNotification(`Tabela "${ct.nomeTabela}" removida.`, 'info');
+                          }
+                        }}
+                        style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                      >
+                        Excluir
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -791,6 +962,296 @@ const RatesSettingsManager: React.FC = () => {
       {activeMainTab === 'machines' && (
         <div style={{ marginTop: '0.5rem' }}>
           <MachinesManager />
+        </div>
+      )}
+
+      {/* MODAL DE CRIAÇÃO DE NOVA TABELA DE TAXAS (EXCLUSIVO ADMINISTRADOR) */}
+      {showCreateModal && isSuperAdmin && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.65)',
+          backdropFilter: 'blur(6px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1.5rem'
+        }}>
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '24px',
+            width: '100%',
+            maxWidth: '850px',
+            maxHeight: '90vh',
+            overflowY: 'auto',
+            padding: '2.5rem',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            border: '1px solid #e2e8f0',
+            position: 'relative'
+          }}>
+            {/* Header do Modal */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1.25rem' }}>
+              <div>
+                <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: '12px', background: '#fef3c7', color: '#b45309', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                  Exclusivo Administrador
+                </span>
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Sliders size={24} color="#d97706" /> Criar Nova Tabela de Taxas
+                </h2>
+                <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.35rem', fontWeight: 500 }}>
+                  Defina o nome, tipo, faixa mínima e máxima de taxas, bandeiras aceitas e valores percentuais de 1x a 18x.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '12px', padding: '0.5rem', cursor: 'pointer', color: '#64748b' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCriarNovaTabela}>
+              {/* Linha 1: Nome e Tipo da Tabela */}
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                    Nome da Nova Tabela *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Tabela 3 - Promocional"
+                    value={newTableForm.nomeTabela}
+                    onChange={e => setNewTableForm(prev => ({ ...prev, nomeTabela: e.target.value }))}
+                    style={{ ...inputRateStyle, textAlign: 'left', padding: '0.8rem 1rem', fontSize: '1rem', fontWeight: 700 }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                    Tipo da Tabela
+                  </label>
+                  <select
+                    value={newTableForm.tipoTabela}
+                    onChange={e => setNewTableForm(prev => ({ ...prev, tipoTabela: e.target.value }))}
+                    style={{ ...inputRateStyle, textAlign: 'left', padding: '0.8rem 1rem', fontSize: '1rem', fontWeight: 700 }}
+                  >
+                    <option value="Padrão">Padrão</option>
+                    <option value="Reduzida">Reduzida</option>
+                    <option value="Flex">Flex</option>
+                    <option value="Promocional">Promocional</option>
+                    <option value="Personalizada">Personalizada</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Linha 2: Faixa de Taxas (Min e Max) */}
+              <div style={{ background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#0f172a', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                  Faixa de Taxas Permitida (%) *
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>Taxa Mínima (%):</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={newTableForm.minTaxa}
+                      onChange={e => setNewTableForm(prev => ({ ...prev, minTaxa: parseFloat(e.target.value) || 0 }))}
+                      style={{ ...inputRateStyle, textAlign: 'center', padding: '0.65rem', fontWeight: 800 }}
+                    />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>Taxa Máxima (%):</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={newTableForm.maxTaxa}
+                      onChange={e => setNewTableForm(prev => ({ ...prev, maxTaxa: parseFloat(e.target.value) || 0 }))}
+                      style={{ ...inputRateStyle, textAlign: 'center', padding: '0.65rem', fontWeight: 800 }}
+                    />
+                  </div>
+                </div>
+                <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                  Todas as taxas de 1x a 18x deverão estar entre <strong>{newTableForm.minTaxa}%</strong> e <strong>{newTableForm.maxTaxa}%</strong>.
+                </p>
+              </div>
+
+              {/* Linha 3: Bandeiras Aceitas com Adição Dinâmica */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
+                  Bandeiras Aceitas na Tabela (Dinâmico) *
+                </label>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  {newTableForm.bandeiras.map(b => (
+                    <span
+                      key={b}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        padding: '0.4rem 0.8rem',
+                        borderRadius: '10px',
+                        fontSize: '0.85rem',
+                        fontWeight: 800,
+                        border: '1px solid #bfdbfe'
+                      }}
+                    >
+                      💳 {b}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFlagFromNewTable(b)}
+                        style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: 0, fontSize: '0.8rem', fontWeight: 900 }}
+                        title="Remover bandeira"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+
+                <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '400px' }}>
+                  <input
+                    type="text"
+                    placeholder="Adicionar nova bandeira (Ex: HIPERCARD, CABAL)"
+                    value={newTableForm.newFlagName}
+                    onChange={e => setNewTableForm(prev => ({ ...prev, newFlagName: e.target.value }))}
+                    style={{ ...inputRateStyle, textAlign: 'left', padding: '0.6rem 0.8rem', fontSize: '0.85rem' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddFlagToNewTable}
+                    style={{ background: '#d97706', color: '#fff', border: 'none', borderRadius: '10px', padding: '0.6rem 1.2rem', fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.85rem' }}
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+              </div>
+
+              {/* Linha 4: Grade de Taxas de 1x a 18x */}
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
+                  Taxas Percentuais por Parcela (1x a 18x)
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.6rem' }}>
+                  {Array.from({ length: 18 }, (_, i) => i + 1).map(installment => {
+                    const currentVal = newTableForm.taxasPorParcelas[installment] ?? 0;
+                    const isOutOfRange = currentVal < newTableForm.minTaxa || currentVal > newTableForm.maxTaxa;
+
+                    return (
+                      <div
+                        key={installment}
+                        style={{
+                          background: isOutOfRange ? '#fef2f2' : '#ffffff',
+                          border: `1.5px solid ${isOutOfRange ? '#ef4444' : '#cbd5e1'}`,
+                          borderRadius: '12px',
+                          padding: '0.5rem',
+                          textAlign: 'center'
+                        }}
+                      >
+                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isOutOfRange ? '#dc2626' : '#64748b', display: 'block', marginBottom: '0.2rem' }}>
+                          {installment}x
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={currentVal}
+                          onChange={e => handleRateChangeInNewTable(installment, parseFloat(e.target.value) || 0)}
+                          style={{
+                            width: '100%',
+                            border: 'none',
+                            background: 'transparent',
+                            textAlign: 'center',
+                            fontWeight: 800,
+                            fontSize: '0.9rem',
+                            color: isOutOfRange ? '#dc2626' : '#0f172a',
+                            outline: 'none'
+                          }}
+                        />
+                        {isOutOfRange && (
+                          <span style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 800, display: 'block', marginTop: '0.1rem' }}>
+                            Fora!
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Linha 5: Simulador de Teste com calcularValorLiquido */}
+              <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '16px', border: '1.5px solid #bbf7d0', marginBottom: '2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#166534', fontWeight: 900, fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+                  <Calculator size={18} color="#16a34a" /> Prévia com Função Auxiliar calcularValorLiquido()
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 2fr', gap: '1rem', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Valor Bruto no Cartão (R$):</span>
+                    <input
+                      type="number"
+                      step="100"
+                      min="1"
+                      value={newTableForm.simGrossAmount}
+                      onChange={e => setNewTableForm(prev => ({ ...prev, simGrossAmount: parseFloat(e.target.value) || 0 }))}
+                      style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
+                    />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Parcelas:</span>
+                    <select
+                      value={newTableForm.simInstallment}
+                      onChange={e => setNewTableForm(prev => ({ ...prev, simInstallment: Number(e.target.value) }))}
+                      style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i + 1).map(n => (
+                        <option key={n} value={n}>{n}x</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ background: '#ffffff', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #86efac' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>
+                      Taxa Aplicada: <strong>{newTableForm.taxasPorParcelas[newTableForm.simInstallment] || 0}%</strong>
+                    </span>
+                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#15803d' }}>
+                      Líquido: R$ {calcularValorLiquido(newTableForm.simGrossAmount, newTableForm.simInstallment, newTableForm.taxasPorParcelas[newTableForm.simInstallment] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botões do Modal */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  style={{ padding: '0.85rem 1.5rem', background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1', borderRadius: '14px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  style={{
+                    padding: '0.85rem 2rem',
+                    background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '14px',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    boxShadow: '0 8px 16px rgba(217, 119, 6, 0.3)'
+                  }}
+                >
+                  Validar e Criar Tabela
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
