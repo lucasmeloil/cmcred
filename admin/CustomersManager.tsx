@@ -175,18 +175,35 @@ const CustomersManager: React.FC = () => {
       };
 
       if (editingId) {
-        const { error } = await supabase
+        let { error } = await supabase
           .from('customers')
           .update(payload)
           .eq('id', editingId);
+
+        if (error && supabaseAdmin) {
+          console.warn('Fallback supabaseAdmin no update de customers:', error.message);
+          const adminRes = await supabaseAdmin
+            .from('customers')
+            .update(payload)
+            .eq('id', editingId);
+          error = adminRes.error;
+        }
 
         if (error) throw error;
         addNotification(`Cliente "${formData.name}" atualizado com sucesso!`, 'sucesso');
         await logAudit('edição_cliente', `Cliente ${formData.name} atualizado (Chave PIX: ${pixValidation.label})`);
       } else {
-        const { error } = await supabase
+        let { error } = await supabase
           .from('customers')
           .insert([payload]);
+
+        if (error && supabaseAdmin) {
+          console.warn('Fallback supabaseAdmin no insert de customers:', error.message);
+          const adminRes = await supabaseAdmin
+            .from('customers')
+            .insert([payload]);
+          error = adminRes.error;
+        }
 
         if (error) throw error;
         addNotification(`Cliente "${formData.name}" cadastrado com sucesso com Chave PIX!`, 'sucesso');

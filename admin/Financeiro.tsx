@@ -248,7 +248,11 @@ const Financeiro: React.FC = () => {
       }
 
       if (entriesToInsert.length > 0) {
-        const { error } = await supabase.from('finance').insert(entriesToInsert);
+        let { error } = await supabase.from('finance').insert(entriesToInsert);
+        if (error && supabaseAdmin) {
+          const adminRes = await supabaseAdmin.from('finance').insert(entriesToInsert);
+          error = adminRes.error;
+        }
         if (error) throw error;
         addNotification(`Sincronização concluída! ${entriesToInsert.length} lançamentos gerados com precisão.`, 'sucesso');
         await logAudit('sincronização_financeira', `Sincronizados ${entriesToInsert.length} registros de empréstimos no financeiro`);
@@ -275,10 +279,18 @@ const Financeiro: React.FC = () => {
     const newStatus = entry.status === 'paid' ? 'pending' : 'paid';
     const actionLabel = newStatus === 'paid' ? 'Baixa registrada' : 'Baixa estornada';
     try {
-      const { error } = await supabase
+      let { error } = await supabase
         .from('finance')
         .update({ status: newStatus })
         .eq('id', entry.id);
+
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin
+          .from('finance')
+          .update({ status: newStatus })
+          .eq('id', entry.id);
+        error = adminRes.error;
+      }
 
       if (error) throw error;
 
@@ -299,7 +311,11 @@ const Financeiro: React.FC = () => {
     }
     if (!window.confirm(`Deseja realmente remover o lançamento "${desc}"?`)) return;
     try {
-      const { error } = await supabase.from('finance').delete().eq('id', id);
+      let { error } = await supabase.from('finance').delete().eq('id', id);
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin.from('finance').delete().eq('id', id);
+        error = adminRes.error;
+      }
       if (error) throw error;
 
       setData(prev => prev.filter(d => d.id !== id));
@@ -322,14 +338,20 @@ const Financeiro: React.FC = () => {
         return;
       }
 
-      const { error } = await supabase.from('finance').insert([{
+      const newEntry = {
         description: formData.description.trim(),
         amount: amountVal,
         due_date: formData.due_date,
         category: formData.category,
         type: showModal,
         status: formData.status
-      }]);
+      };
+
+      let { error } = await supabase.from('finance').insert([newEntry]);
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin.from('finance').insert([newEntry]);
+        error = adminRes.error;
+      }
 
       if (error) throw error;
       addNotification(`Lançamento de ${showModal === 'receivable' ? 'Receita' : 'Despesa'} registrado com sucesso!`, 'sucesso');

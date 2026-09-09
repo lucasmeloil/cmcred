@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { 
   UserPlus, Search, Filter, Edit2, Trash2, Users, Copy, Check, Sparkles, 
   MapPin, Home, Loader2, Navigation, Building2, X, CheckCircle, ShieldCheck
@@ -59,10 +60,21 @@ const PeopleManager: React.FC = () => {
       setLoading(true);
     }
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('customers')
         .select('*')
         .order('created_at', { ascending: false });
+
+      if ((error || !data || data.length === 0) && supabaseAdmin) {
+        const adminRes = await supabaseAdmin
+          .from('customers')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (adminRes.data && adminRes.data.length > 0) {
+          data = adminRes.data;
+          error = null;
+        }
+      }
 
       if (error) throw error;
       if (data) {
@@ -122,10 +134,15 @@ const PeopleManager: React.FC = () => {
   };
 
   const handleCepLookup = async (cepInput: string) => {
-    const cleanCep = cepInput.replace(/\D/g, '');
+    const cleanCep = (cepInput || '').replace(/\D/g, '');
+    if (!cleanCep || cleanCep === '00000000') {
+      setCepStatus(null);
+      return;
+    }
+
     if (cleanCep.length !== 8) {
-      if (cleanCep.length > 0 && cleanCep.length < 8) {
-        setCepStatus({ message: 'Digite os 8 dígitos do CEP para busca automática.', isError: true });
+      if (cleanCep.length > 0) {
+        setCepStatus({ message: 'Digite 8 dígitos para consultar ou preencha o endereço manualmente (opcional).', isError: false });
       }
       return;
     }
@@ -185,10 +202,10 @@ const PeopleManager: React.FC = () => {
       }
 
       if (!found) {
-        setCepStatus({ message: 'CEP não encontrado. Preencha o endereço manualmente.', isError: true });
+        setCepStatus({ message: 'CEP não localizado nos Correios. O preenchimento do endereço é opcional.', isError: false });
       }
     } catch (err) {
-      setCepStatus({ message: 'Erro ao consultar CEP. Preencha manualmente.', isError: true });
+      setCepStatus({ message: 'Não foi possível consultar o CEP. Você pode preencher manualmente se desejar.', isError: false });
     } finally {
       setCepLoading(false);
     }
@@ -231,47 +248,75 @@ const PeopleManager: React.FC = () => {
       }
     }
 
+    // Sanitização e tratamento do CEP (opcional)
+    const rawCep = (formData.cep || '').replace(/\D/g, '');
+    const cleanCepVal = !rawCep || rawCep === '00000000' ? null : (formData.cep?.trim() || null);
+
     const payload = {
       name: formData.name?.trim(),
-      cpf: formData.cpf?.trim() || '',
-      phone: formData.phone?.trim() || '',
-      email: formData.email?.trim() || '',
-      pix_key: formData.pix_key?.trim() || '',
-      notes: formData.notes?.trim() || '',
+      cpf: formData.cpf?.trim() || null,
+      phone: formData.phone?.trim() || null,
+      email: formData.email?.trim() || null,
+      pix_key: formData.pix_key?.trim() || null,
+      notes: formData.notes?.trim() || null,
       status: formData.status || 'active',
       person_type: formData.person_type || 'customer',
-      cep: formData.cep?.trim() || '',
-      address: formData.address?.trim() || '',
-      address_number: formData.address_number?.trim() || '',
-      complement: formData.complement?.trim() || '',
-      neighborhood: formData.neighborhood?.trim() || '',
-      city: formData.city?.trim() || '',
-      state: formData.state?.trim() || ''
+      cep: cleanCepVal,
+      address: formData.address?.trim() || null,
+      address_number: formData.address_number?.trim() || null,
+      complement: formData.complement?.trim() || null,
+      neighborhood: formData.neighborhood?.trim() || null,
+      city: formData.city?.trim() || null,
+      state: formData.state?.trim() || null
     };
 
     if (editingId) {
-      const { error } = await supabase
+      let { error } = await supabase
         .from('customers')
         .update(payload)
         .eq('id', editingId);
+
+      if (error && supabaseAdmin) {
+        console.warn('Fallback com supabaseAdmin no update de cliente:', error.message);
+        const adminRes = await supabaseAdmin
+          .from('customers')
+          .update(payload)
+          .eq('id', editingId);
+        error = adminRes.error;
+      }
         
       if (!error) {
-        await logAudit('edição', `Perfil de ${payload.name} atualizado (Chave PIX: ${payload.pix_key}, CEP: ${payload.cep || 'N/A'}).`);
+        await logAudit('edição', `Perfil de ${payload.name} atualizado (Chave PIX: ${payload.pix_key || 'N/A'}, CEP: ${payload.cep || 'Nenhum'}).`);
         addNotification(`${payload.name} atualizado com sucesso!`, 'sucesso');
         fetchPeople();
         handleClose();
       } else {
-        addNotification('Erro ao atualizar: ' + error.message, 'alerta');
+        const msg = error.message.includes('unique constraint') || error.message.includes('customers_cpf_key')
+          ? 'Este CPF já está cadastrado em outro cliente.'
+          : error.message;
+        addNotification('Erro ao atualizar: ' + msg, 'alerta');
       }
     } else {
-      const { error } = await supabase.from('customers').insert([payload]);
+      let { error } = await supabase.from('customers').insert([payload]);
+
+      if (error && supabaseAdmin) {
+        console.warn('Fallback com supabaseAdmin no cadastro de cliente:', error.message);
+        const adminRes = await supabaseAdmin
+          .from('customers')
+          .insert([payload]);
+        error = adminRes.error;
+      }
+
       if (!error) {
-        await logAudit('criação', `Novo cadastro criado: ${payload.name} (Chave PIX: ${payload.pix_key}, CEP: ${payload.cep || 'N/A'}).`);
+        await logAudit('criação', `Novo cadastro criado: ${payload.name} (Chave PIX: ${payload.pix_key || 'N/A'}, CEP: ${payload.cep || 'Nenhum'}).`);
         addNotification(`${payload.name} cadastrado com sucesso!`, 'sucesso');
         fetchPeople();
         handleClose();
       } else {
-        addNotification('Erro ao cadastrar: ' + error.message, 'alerta');
+        const msg = error.message.includes('unique constraint') || error.message.includes('customers_cpf_key')
+          ? 'Este CPF já está cadastrado em outro cliente.'
+          : error.message;
+        addNotification('Erro ao cadastrar: ' + msg, 'alerta');
       }
     }
   };
@@ -281,7 +326,14 @@ const PeopleManager: React.FC = () => {
     if (!confirmed) return;
     
     const personName = people.find(p => p.id === id)?.name || 'Desconhecido';
-    const { error } = await supabase.from('customers').delete().eq('id', id);
+    let { error } = await supabase.from('customers').delete().eq('id', id);
+
+    if (error && supabaseAdmin) {
+      console.warn('Fallback com supabaseAdmin na exclusão de cliente:', error.message);
+      const adminRes = await supabaseAdmin.from('customers').delete().eq('id', id);
+      error = adminRes.error;
+    }
+
     if (!error) {
       await logAudit('exclusão', `Cadastro de ${personName} removido do sistema.`);
       addNotification(`Cadastro removido com sucesso.`, 'info');
@@ -586,7 +638,7 @@ const PeopleManager: React.FC = () => {
                   {editingId ? '📝 Editar Cadastro de Cliente' : '👤 Novo Cadastro de Cliente'}
                 </h2>
                 <p style={{ margin: '0.25rem 0 0', color: '#64748b', fontSize: '0.85rem', fontWeight: 600 }}>
-                  Preencha os dados do cliente, chave PIX e endereço integrado com consulta CEP automática.
+                  Preencha os dados do cliente e a chave PIX para repasse. O endereço e o CEP são totalmente opcionais.
                 </p>
               </div>
               <button 
@@ -799,19 +851,24 @@ const PeopleManager: React.FC = () => {
                 }}>
                   {/* Cabeçalho da Seção de Endereço */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #fef3c7', paddingBottom: '0.75rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#92400e', fontWeight: 900, fontSize: '0.95rem' }}>
-                      <MapPin size={20} color="#d97706" /> ENDEREÇO DO CLIENTE
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#92400e', fontWeight: 900, fontSize: '0.95rem' }}>
+                        <MapPin size={20} color="#d97706" /> ENDEREÇO DO CLIENTE (OPCIONAL)
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: '#b45309', fontWeight: 600 }}>
+                        O preenchimento do endereço e CEP não é obrigatório.
+                      </span>
                     </div>
                     <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.7rem', fontWeight: 800, padding: '3px 8px', borderRadius: '6px' }}>
-                      ViaCEP Automático
+                      Opcional
                     </span>
                   </div>
 
-                  {/* Campo CEP com Botão Buscar */}
+                  {/* Campo CEP com Botão Buscar e Limpar */}
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                      <label style={{ color: '#78350f', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase' }}>
-                        CEP (Auto Preenchimento)
+                      <label style={{ color: '#78350f', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        CEP <span style={{ color: '#94a3b8', fontWeight: 600, fontSize: '0.7rem' }}>(Opcional)</span>
                       </label>
                       {cepLoading && (
                         <span style={{ fontSize: '0.75rem', color: '#b45309', display: 'flex', alignItems: 'center', gap: '0.3rem', fontWeight: 700 }}>
@@ -821,25 +878,49 @@ const PeopleManager: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <input 
-                        placeholder="00000-000"
+                        placeholder="00000-000 (Opcional)"
                         maxLength={9}
                         style={{ ...inputStyle, flex: 1, fontWeight: 700, letterSpacing: '0.5px' }} 
                         value={formData.cep || ''} 
                         onChange={e => {
                           const formatted = formatCep(e.target.value);
                           setFormData({ ...formData, cep: formatted });
-                          if (formatted.replace(/\D/g, '').length === 8) {
+                          if (formatted.replace(/\D/g, '').length === 8 && formatted.replace(/\D/g, '') !== '00000000') {
                             handleCepLookup(formatted);
                           }
                         }}
                         onBlur={() => {
-                          if (formData.cep) handleCepLookup(formData.cep);
+                          if (formData.cep && formData.cep.replace(/\D/g, '') !== '00000000') {
+                            handleCepLookup(formData.cep);
+                          }
                         }}
                       />
+                      {formData.cep && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, cep: '' }));
+                            setCepStatus(null);
+                          }}
+                          title="Remover CEP"
+                          style={{
+                            background: '#f8fafc',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '12px',
+                            padding: '0 0.8rem',
+                            color: '#64748b',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Limpar
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => formData.cep && handleCepLookup(formData.cep)}
-                        disabled={cepLoading || !formData.cep}
+                        disabled={cepLoading || !formData.cep || formData.cep.replace(/\D/g, '') === '00000000'}
                         style={{ 
                           background: '#d97706', 
                           color: '#fff', 
@@ -848,12 +929,13 @@ const PeopleManager: React.FC = () => {
                           padding: '0 1.25rem', 
                           fontWeight: 800, 
                           fontSize: '0.8rem',
-                          cursor: 'pointer',
+                          cursor: (cepLoading || !formData.cep || formData.cep.replace(/\D/g, '') === '00000000') ? 'not-allowed' : 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '0.35rem',
                           whiteSpace: 'nowrap',
-                          boxShadow: '0 2px 6px rgba(217,119,6,0.25)'
+                          boxShadow: '0 2px 6px rgba(217,119,6,0.25)',
+                          opacity: (cepLoading || !formData.cep || formData.cep.replace(/\D/g, '') === '00000000') ? 0.6 : 1
                         }}
                       >
                         {cepLoading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}

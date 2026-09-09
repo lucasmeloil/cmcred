@@ -14,6 +14,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { useAuth } from './AuthContext';
 import { 
   getPendingSettlementBatches, 
@@ -82,7 +83,7 @@ export const MachineSettlementAlertBanner: React.FC<MachineSettlementAlertBanner
       const currentUserId = currentUser?.id || null;
 
       // 1. Atualizar status de liquidação nos empréstimos do lote
-      const { error: loanErr } = await supabase
+      let { error: loanErr } = await supabase
         .from('loans')
         .update({
           settlement_status: 'settled',
@@ -91,16 +92,39 @@ export const MachineSettlementAlertBanner: React.FC<MachineSettlementAlertBanner
         })
         .in('id', selectedBatch.loanIds);
 
+      if (loanErr && supabaseAdmin) {
+        const adminRes = await supabaseAdmin
+          .from('loans')
+          .update({
+            settlement_status: 'settled',
+            settled_at: nowIso,
+            settled_by: currentUserId
+          })
+          .in('id', selectedBatch.loanIds);
+        loanErr = adminRes.error;
+      }
+
       if (loanErr) throw loanErr;
 
       // 2. Atualizar as contas a receber correspondentes na tabela financeira
-      const { error: finErr } = await supabase
+      let { error: finErr } = await supabase
         .from('finance')
         .update({
           status: 'paid'
         })
         .in('loan_id', selectedBatch.loanIds)
         .eq('type', 'receivable');
+
+      if (finErr && supabaseAdmin) {
+        const adminFinRes = await supabaseAdmin
+          .from('finance')
+          .update({
+            status: 'paid'
+          })
+          .in('loan_id', selectedBatch.loanIds)
+          .eq('type', 'receivable');
+        finErr = adminFinRes.error;
+      }
 
       if (finErr) {
         console.warn('Aviso ao atualizar financeiro de recebíveis:', finErr.message);

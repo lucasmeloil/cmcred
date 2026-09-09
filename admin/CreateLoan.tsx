@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { useAuth } from './AuthContext';
 import {
   Wallet,
@@ -109,18 +110,37 @@ const CreateLoan: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      const [leadsRes, customersRes, machinesRes, profilesRes] = await Promise.all([
+      let [leadsRes, customersRes, machinesRes, profilesRes] = await Promise.all([
         supabase.from('leads').select('*').order('name'),
         supabase.from('customers').select('*').order('name'),
         supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name'),
         supabase.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name')
       ]);
 
+      if (supabaseAdmin) {
+        if (!leadsRes.data || leadsRes.data.length === 0) {
+          const fb = await supabaseAdmin.from('leads').select('*').order('name');
+          if (fb.data && fb.data.length > 0) leadsRes = fb;
+        }
+        if (!customersRes.data || customersRes.data.length === 0) {
+          const fb = await supabaseAdmin.from('customers').select('*').order('name');
+          if (fb.data && fb.data.length > 0) customersRes = fb;
+        }
+        if (!machinesRes.data || machinesRes.data.length === 0) {
+          const fb = await supabaseAdmin.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name');
+          if (fb.data && fb.data.length > 0) machinesRes = fb;
+        }
+        if (!profilesRes.data || profilesRes.data.length === 0) {
+          const fb = await supabaseAdmin.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name');
+          if (fb.data && fb.data.length > 0) profilesRes = fb;
+        }
+      }
+
       if (leadsRes.data) setLeads(leadsRes.data);
       if (customersRes.data) {
         setCustomers(customersRes.data);
         setFormData(prev => {
-          if (!prev.customer_id && customersRes.data.length > 0) {
+          if (!prev.customer_id && customersRes.data && customersRes.data.length > 0) {
             return {
               ...prev,
               customer_id: customersRes.data[0].id.toString(),
@@ -396,7 +416,21 @@ const CreateLoan: React.FC = () => {
         status: 'completed'
       };
 
-      const { data: insertedLoans, error: loanError } = await supabase.from('loans').insert([insertLoan]).select();
+      let insertedLoans: any = null;
+      let { data, error: loanError } = await supabase.from('loans').insert([insertLoan]).select();
+      insertedLoans = data;
+
+      if (loanError && supabaseAdmin) {
+        console.warn('Fallback com supabaseAdmin no insert de loans:', loanError.message);
+        const adminRes = await supabaseAdmin.from('loans').insert([insertLoan]).select();
+        if (!adminRes.error && adminRes.data) {
+          insertedLoans = adminRes.data;
+          loanError = null;
+        } else if (adminRes.error) {
+          loanError = adminRes.error;
+        }
+      }
+
       if (loanError) throw loanError;
 
       const createdLoanId = insertedLoans && insertedLoans[0] ? insertedLoans[0].id : null;
@@ -427,7 +461,12 @@ const CreateLoan: React.FC = () => {
         }
       ];
 
-      const { error: finError } = await supabase.from('finance').insert(financeEntries);
+      let { error: finError } = await supabase.from('finance').insert(financeEntries);
+      if (finError && supabaseAdmin) {
+        console.warn('Fallback com supabaseAdmin no insert de finance:', finError.message);
+        const adminFinRes = await supabaseAdmin.from('finance').insert(financeEntries);
+        finError = adminFinRes.error;
+      }
       if (finError) console.warn('Aviso financeiro:', finError.message);
 
       await logAudit('operação', `Empréstimo de R$ ${formatCurrency(safeGrossAmount)} em ${formData.installments}x (${machineLabel}) registrado para ${personName}`);

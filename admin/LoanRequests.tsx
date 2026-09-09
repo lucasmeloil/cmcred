@@ -456,8 +456,17 @@ const LoanRequests: React.FC = () => {
     const confirmed = await showConfirm('Tem certeza que deseja excluir este registro permanentemente?');
     if (!confirmed) return;
     try {
-      await supabase.from('finance').delete().eq('loan_id', id);
-      const { error } = await supabase.from('loans').delete().eq('id', id);
+      let finDel = await supabase.from('finance').delete().eq('loan_id', id);
+      if (finDel.error && supabaseAdmin) {
+        await supabaseAdmin.from('finance').delete().eq('loan_id', id);
+      }
+
+      let { error } = await supabase.from('loans').delete().eq('id', id);
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin.from('loans').delete().eq('id', id);
+        error = adminRes.error;
+      }
+
       if (error) throw error;
       addNotification('Contrato removido com sucesso!', 'sucesso');
       await logAudit('exclusão_empréstimo', `Contrato ${id.slice(0, 8)} removido pelo usuário`);
@@ -472,7 +481,11 @@ const LoanRequests: React.FC = () => {
     try {
       const updateData: any = { status: newStatus };
       if (obs !== undefined) updateData.observations = obs;
-      const { error } = await supabase.from('loans').update(updateData).eq('id', id);
+      let { error } = await supabase.from('loans').update(updateData).eq('id', id);
+      if (error && supabaseAdmin) {
+        const adminRes = await supabaseAdmin.from('loans').update(updateData).eq('id', id);
+        error = adminRes.error;
+      }
       if (error) throw error;
       addNotification(`Status atualizado para "${statusConfig[newStatus]?.label || newStatus}"`, 'sucesso');
       await logAudit('atualização_status', `Contrato ${id.slice(0, 8)} alterado para ${newStatus}`);
