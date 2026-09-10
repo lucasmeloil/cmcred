@@ -129,6 +129,10 @@ const Financeiro: React.FC = () => {
     }
   }, [dateRange, customRange]);
 
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
   // Sincronização em tempo real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
     tables: ['finance', 'loans'],

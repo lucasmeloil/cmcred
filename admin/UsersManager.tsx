@@ -212,6 +212,10 @@ const UsersManager: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
   // Sincronização em tempo real de usuários e permissões com Auto-Heal
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
     table: 'profiles',

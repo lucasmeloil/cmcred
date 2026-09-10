@@ -78,6 +78,10 @@ const PeopleManager: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    fetchPeople();
+  }, [fetchPeople]);
+
   // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
     table: 'customers',

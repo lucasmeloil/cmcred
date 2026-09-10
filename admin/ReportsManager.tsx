@@ -57,7 +57,13 @@ interface LoanReportRow {
 }
 
 const ReportsManager: React.FC = () => {
-  const { addNotification, logAudit, currentUser, isSuperAdmin } = useAuth();
+  const { addNotification, logAudit, currentUser, isSuperAdmin, authUserEmail } = useAuth();
+  const email = (currentUser?.email || authUserEmail || '').toLowerCase();
+  const isAdmin = isSuperAdmin || 
+                  email === 'caique@cmcred.com.br' || 
+                  email === 'lucas@teste.com.br' || 
+                  email.startsWith('admin@') || 
+                  currentUser?.perfil === 'admin';
   
   // Data State
   const [loans, setLoans] = useState<any[]>([]);
@@ -80,7 +86,7 @@ const ReportsManager: React.FC = () => {
     }
     try {
       let loansQuery = supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
-      if (!isSuperAdmin && currentUser?.id) {
+      if (!isAdmin && currentUser?.id) {
         loansQuery = loansQuery.eq('consultant_id', currentUser.id);
       }
 
@@ -92,7 +98,7 @@ const ReportsManager: React.FC = () => {
 
       if (loansRes.data) {
         let fetchedLoans = loansRes.data;
-        if (!isSuperAdmin && currentUser?.id) {
+        if (!isAdmin && currentUser?.id) {
           fetchedLoans = fetchedLoans.filter((l: any) => l.consultant_id === currentUser.id);
         }
         setLoans(fetchedLoans);
@@ -108,12 +114,16 @@ const ReportsManager: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [isSuperAdmin, currentUser?.id]);
+  }, [isAdmin, currentUser?.id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Sincronização em tempo real inteligente com Auto-Heal e re-fetch
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
     tables: ['loans', 'finance'],
-    onDataChange: () => fetchData(true),
+    onDataChange: fetchData,
     heartbeatIntervalMs: 45000,
   });
 

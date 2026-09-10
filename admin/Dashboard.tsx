@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
@@ -128,9 +128,10 @@ const DEFAULT_DASHBOARD_STATS = {
 };
 
 const Dashboard: React.FC = () => {
-  const { currentUser } = useAuth();
-  const email = (currentUser?.email || '').toLowerCase();
-  const isAdmin = email === 'caique@cmcred.com.br' || 
+  const { currentUser, authUserEmail, isSuperAdmin } = useAuth();
+  const email = (currentUser?.email || authUserEmail || '').toLowerCase();
+  const isAdmin = isSuperAdmin || 
+                  email === 'caique@cmcred.com.br' || 
                   email === 'lucas@teste.com.br' || 
                   email.startsWith('admin@') || 
                   currentUser?.perfil === 'admin';
@@ -151,7 +152,7 @@ const Dashboard: React.FC = () => {
     });
   }, [recentLoans, currentUser]);
 
-  const fetchData = async (isSilent = false) => {
+  const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) {
       setLoading(true);
     }
@@ -368,7 +369,11 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAdmin, currentUser?.id, currentUser?.nome, currentUser?.full_name]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Sincronização em tempo real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({

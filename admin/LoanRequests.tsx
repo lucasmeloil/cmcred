@@ -42,10 +42,11 @@ const LoanRequests: React.FC = () => {
     canDeleteLoans 
   } = useAuth();
 
+  const email = (currentUser?.email || authUserEmail || '').toLowerCase();
   const isAdmin = isSuperAdmin || 
-                  authUserEmail?.toLowerCase().startsWith('admin@') || 
-                  currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
-                  currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' || 
+                  email.startsWith('admin@') || 
+                  email === 'caique@cmcred.com.br' || 
+                  email === 'lucas@teste.com.br' || 
                   currentUser?.perfil === 'admin';
 
   const [loans, setLoans] = useState<LoanRequest[]>([]);
@@ -120,7 +121,11 @@ const LoanRequests: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [addNotification]);
+  }, [isAdmin, currentUser?.id, addNotification]);
+
+  useEffect(() => {
+    fetchInitialData();
+  }, [fetchInitialData]);
 
   // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({

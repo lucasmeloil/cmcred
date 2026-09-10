@@ -98,17 +98,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // 1. Garante que a sessão do Supabase está ativa e com token válido antes de requisitar
-      const { data: sessionData } = await supabase.auth.getSession();
-      const activeSession = sessionData?.session;
-      
-      // Se o token estiver perto de expirar, renova silenciosamente
-      if (activeSession?.expires_at) {
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (activeSession.expires_at - nowSec < 300) {
-          await supabase.auth.refreshSession();
-        }
-      }
+      // 1. Dispara consultas paralelas de dados
 
       // 2. Dispara consultas paralelas de dados
       const loansQuery = supabase
