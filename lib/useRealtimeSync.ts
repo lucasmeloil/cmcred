@@ -130,20 +130,27 @@ export function useRealtimeSync({
     // 2. Listener de Visibilidade Inteligente (Item 5 do Usuário):
     // Pausa a sincronização quando a aba está oculta para não sobrecarregar rede ou sessão,
     // e retoma suavemente em segundo plano ao retornar sem desconectar o usuário.
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (typeof document !== 'undefined') {
         if (document.visibilityState === 'hidden') {
-          // Pausa ativa: não dispara requisições enquanto o usuário está em outra aba
           return;
         }
 
         if (document.visibilityState === 'visible') {
-          // Auto-heal: reconecta o canal se a conexão websocket caiu durante o repouso
+          // Auto-heal: reconecta canal WebSocket se caiu durante repouso
           if (!channelRef.current || (channelRef.current as any).state === 'closed') {
             setupChannel();
           }
 
-          // Busca dados imediatamente ao retornar para a aba (cooldown mínimo de 3s)
+          // Garante sessão ativa antes de buscar dados (evita concorrência lock auth + queries)
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return; // Sem sessão válida, não busca dados
+          } catch {
+            return; // Falha ao verificar sessão — não busca dados para evitar erro
+          }
+
+          // Busca dados ao retornar para a aba (cooldown mínimo de 3s)
           const timeSinceLast = Date.now() - lastRefreshTimeRef.current;
           if (timeSinceLast > 3000) {
             triggerRefresh(true);

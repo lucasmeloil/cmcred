@@ -17,7 +17,11 @@ export const supabase = globalObj.__cmcred_supabase_client__ || (
       autoRefreshToken: true,
       detectSessionInUrl: true,
       storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+      // CRITICAL FIX: Remove o lock do GoTrue que serializava todas as chamadas
+      // getSession() em fila (token refresh + queries PostgREST concorrentes),
+      // causando timeout de 15s ao retornar para a aba após ficar inativo.
+      // Sem o lock customizado, as queries correm em paralelo via HTTP/2 normalmente.
+      lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => await fn(),
     }
   }))
 );
-
