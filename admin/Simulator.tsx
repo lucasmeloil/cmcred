@@ -28,8 +28,10 @@ import {
   calculateLoanSimulation,
   buildWhatsAppSimulationMessage,
   fetchRatesFromDatabase,
+  fetchCustomTablesFromDatabase,
   type CardFlagOption,
   type RateTableType,
+  type NovaTabelaTaxasResultado,
   TABLE_OPTIONS
 } from '../lib/rates';
 
@@ -41,6 +43,7 @@ const Simulator: React.FC = () => {
     currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br';
 
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
+  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
   const [tabelaTaxa, setTabelaTaxa] = useState<RateTableType>('tabela_1');
   const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>('Valor Líquido');
   const [parcelas, setParcelas] = useState<number>(8);
@@ -53,7 +56,13 @@ const Simulator: React.FC = () => {
 
   const loadRates = React.useCallback(async () => {
     try {
-      const { flags: dbFlags } = await fetchRatesFromDatabase(true);
+      const [dbCustom, { flags: dbFlags }] = await Promise.all([
+        fetchCustomTablesFromDatabase(),
+        fetchRatesFromDatabase(true)
+      ]);
+      if (dbCustom) {
+        setCustomTables(dbCustom);
+      }
       if (dbFlags && dbFlags.length > 0) {
         setFlags(dbFlags);
       }
@@ -64,7 +73,7 @@ const Simulator: React.FC = () => {
   }, []);
 
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
-    table: 'simulator_rates',
+    tables: ['simulator_rates', 'custom_rate_tables'],
     onDataChange: loadRates,
     heartbeatIntervalMs: 45000,
   });
@@ -92,6 +101,23 @@ const Simulator: React.FC = () => {
     };
   }, []);
 
+  // Opções completas de tabelas de taxas (Oficiais + Criadas no Banco)
+  const allTableOptions = useMemo(() => {
+    const base = TABLE_OPTIONS.map(opt => ({
+      id: opt.id as RateTableType,
+      name: opt.name,
+      description: isAdmin ? opt.description : (opt.id === 'tabela_1' ? 'Matriz Padrão Oficial' : 'Matriz Reduzida Flex'),
+      isCustom: false
+    }));
+    const custom = customTables.map(ct => ({
+      id: ct.id as RateTableType,
+      name: ct.nomeTabela,
+      description: `Faixa: ${ct.faixaTaxas?.min ?? 0}% a ${ct.faixaTaxas?.max ?? 0}% • ${ct.tipoTabela}`,
+      isCustom: true
+    }));
+    return [...base, ...custom];
+  }, [customTables, isAdmin]);
+
   // Cálculo em tempo real usando a fórmula e taxas oficiais do HTML
   const simulation = useMemo(() => {
     return calculateLoanSimulation({
@@ -99,9 +125,10 @@ const Simulator: React.FC = () => {
       parcelas,
       tipoCalculo,
       bandeiraCartao,
-      tableType: tabelaTaxa
+      tableType: tabelaTaxa,
+      customTablesList: customTables
     });
-  }, [valorDesejado, parcelas, tipoCalculo, bandeiraCartao, tabelaTaxa, ratesVersion]);
+  }, [valorDesejado, parcelas, tipoCalculo, bandeiraCartao, tabelaTaxa, customTables, ratesVersion]);
 
   // Tabela comparativa de 1x a 18x para a bandeira selecionada
   const installmentTable = useMemo(() => {
@@ -112,7 +139,8 @@ const Simulator: React.FC = () => {
         parcelas: p,
         tipoCalculo,
         bandeiraCartao,
-        tableType: tabelaTaxa
+        tableType: tabelaTaxa,
+        customTablesList: customTables
       });
       return {
         parcelas: p,
@@ -122,7 +150,7 @@ const Simulator: React.FC = () => {
         parcela: res.valorParcela
       };
     });
-  }, [valorDesejado, tipoCalculo, bandeiraCartao, tabelaTaxa, ratesVersion]);
+  }, [valorDesejado, tipoCalculo, bandeiraCartao, tabelaTaxa, customTables, ratesVersion]);
 
   const selectedFlagObj = flags.find(f => f.key === bandeiraCartao) || flags[0] || { name: 'VISA / MASTER' };
 
@@ -314,8 +342,8 @@ const Simulator: React.FC = () => {
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#0f172a', fontSize: '0.85rem', fontWeight: 800, marginBottom: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               <Sliders size={16} color="#d97706" /> Tabela de Taxas:
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              {TABLE_OPTIONS.map(opt => {
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
+              {allTableOptions.map(opt => {
                 const isSelected = tabelaTaxa === opt.id;
                 return (
                   <button
@@ -336,12 +364,28 @@ const Simulator: React.FC = () => {
                       flexDirection: 'column',
                       gap: '0.2rem',
                       transition: 'all 0.2s',
-                      boxShadow: isSelected ? '0 4px 12px rgba(217,119,6,0.15)' : 'none'
+                      boxShadow: isSelected ? '0 4px 12px rgba(217,119,6,0.15)' : 'none',
+                      position: 'relative'
                     }}
                   >
-                    <span style={{ fontSize: '1rem', fontWeight: 900 }}>{opt.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '1rem', fontWeight: 900 }}>{opt.name}</span>
+                      {opt.isCustom && (
+                        <span style={{
+                          fontSize: '0.65rem',
+                          padding: '2px 6px',
+                          borderRadius: '6px',
+                          background: isSelected ? '#d97706' : '#f1f5f9',
+                          color: isSelected ? '#ffffff' : '#64748b',
+                          fontWeight: 700,
+                          textTransform: 'uppercase'
+                        }}>
+                          Personalizada
+                        </span>
+                      )}
+                    </div>
                     <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : '#94a3b8' }}>
-                      {isAdmin ? opt.description : (opt.id === 'tabela_1' ? 'Matriz Padrão Oficial' : 'Matriz Reduzida Flex')}
+                      {opt.description}
                     </span>
                   </button>
                 );

@@ -37,7 +37,9 @@ import {
   calculateSettlementDueDate,
   type CardFlagOption,
   type RateTableType,
-  TABLE_OPTIONS
+  TABLE_OPTIONS,
+  fetchCustomTablesFromDatabase,
+  type NovaTabelaTaxasResultado
 } from '../lib/rates';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
@@ -61,11 +63,12 @@ const CreateLoan: React.FC = () => {
   const [machines, setMachines] = useState<any[]>([]);
   const [consultants, setConsultants] = useState<any[]>([]);
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
+  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
 
   // Modo de seleção de cliente
   const [selectionType, setSelectionType] = useState<'customer' | 'lead' | 'manual'>('customer');
 
-  // Opções de Tabela de Taxas (Tabela 1 ou Tabela 2)
+  // Opções de Tabela de Taxas (Tabela 1, Tabela 2 ou Tabelas Personalizadas)
   const [rateTableType, setRateTableType] = useState<RateTableType>('tabela_1');
 
   // Tipo de cálculo oficial do Simulador HTML
@@ -112,12 +115,17 @@ const CreateLoan: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      let [leadsRes, customersRes, machinesRes, profilesRes] = await Promise.all([
+      let [leadsRes, customersRes, machinesRes, profilesRes, customTablesData] = await Promise.all([
         supabase.from('leads').select('*').order('name'),
         supabase.from('customers').select('*').order('name'),
         supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name'),
-        supabase.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name')
+        supabase.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name'),
+        fetchCustomTablesFromDatabase()
       ]);
+
+      if (customTablesData) {
+        setCustomTables(customTablesData);
+      }
 
       if (supabaseAdmin) {
         if (!leadsRes.data || leadsRes.data.length === 0) {
@@ -223,16 +231,33 @@ const CreateLoan: React.FC = () => {
 
   // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
-    tables: ['customers', 'machines', 'simulator_rates'],
+    tables: ['customers', 'machines', 'simulator_rates', 'custom_rate_tables'],
     onDataChange: fetchData,
     heartbeatIntervalMs: 45000,
   });
 
   // Atualizar a taxa padrão automaticamente ao trocar de tabela, bandeira ou quantidade de vezes
   useEffect(() => {
-    const defaultRate = getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType);
+    const defaultRate = getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType, customTables);
     setFormData(prev => ({ ...prev, interest_rate: defaultRate }));
-  }, [formData.card_flag_id, formData.installments, rateTableType]);
+  }, [formData.card_flag_id, formData.installments, rateTableType, customTables]);
+
+  // Lista unificada de todas as tabelas (Oficiais + Personalizadas do Banco)
+  const allTableOptions = useMemo(() => {
+    const base = TABLE_OPTIONS.map(opt => ({
+      id: opt.id as RateTableType,
+      name: opt.name,
+      description: opt.description,
+      isCustom: false
+    }));
+    const custom = customTables.map(ct => ({
+      id: ct.id as RateTableType,
+      name: ct.nomeTabela,
+      description: `Faixa: ${ct.faixaTaxas?.min ?? 0}% a ${ct.faixaTaxas?.max ?? 0}% • ${ct.tipoTabela}`,
+      isCustom: true
+    }));
+    return [...base, ...custom];
+  }, [customTables]);
 
   // Atualizar dados de PIX e cliente ao selecionar cliente existente
   const handleSelectCustomer = (customerId: string) => {
@@ -280,9 +305,10 @@ const CreateLoan: React.FC = () => {
       tipoCalculo: calculationMode,
       bandeiraCartao: formData.card_flag_id,
       tableType: rateTableType,
-      customTaxa: formData.interest_rate
+      customTaxa: formData.interest_rate,
+      customTablesList: customTables
     });
-  }, [formData.requested_amount, formData.installments, calculationMode, formData.card_flag_id, rateTableType, formData.interest_rate]);
+  }, [formData.requested_amount, formData.installments, calculationMode, formData.card_flag_id, rateTableType, formData.interest_rate, customTables]);
 
   const currentInstallments = Number(formData.installments) || 1;
   const safeGrossAmount = simResult.valorTotal; // Total passado no cartão
@@ -542,7 +568,7 @@ const CreateLoan: React.FC = () => {
             <Sliders size={16} color="#d97706" /> Tabela de Taxas Aplicada:
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem' }}>
-            {TABLE_OPTIONS.map(opt => {
+            {allTableOptions.map(opt => {
               const isSelected = rateTableType === opt.id;
               return (
                 <button
@@ -563,10 +589,26 @@ const CreateLoan: React.FC = () => {
                     flexDirection: 'column',
                     gap: '0.2rem',
                     transition: 'all 0.2s',
-                    boxShadow: isSelected ? '0 4px 10px rgba(0,168,89,0.15)' : 'none'
+                    boxShadow: isSelected ? '0 4px 10px rgba(0,168,89,0.15)' : 'none',
+                    position: 'relative'
                   }}
                 >
-                  <span style={{ fontSize: '0.95rem', fontWeight: 900 }}>{opt.name}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.95rem', fontWeight: 900 }}>{opt.name}</span>
+                    {opt.isCustom && (
+                      <span style={{
+                        fontSize: '0.65rem',
+                        padding: '2px 6px',
+                        borderRadius: '6px',
+                        background: isSelected ? '#d97706' : '#f1f5f9',
+                        color: isSelected ? '#ffffff' : '#64748b',
+                        fontWeight: 700,
+                        textTransform: 'uppercase'
+                      }}>
+                        Personalizada
+                      </span>
+                    )}
+                  </div>
                   <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isSelected ? '#059669' : '#94a3b8' }}>{opt.description}</span>
                 </button>
               );

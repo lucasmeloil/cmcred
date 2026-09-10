@@ -7,7 +7,7 @@
 import { supabase } from './supabase';
 import { supabaseAdmin } from './supabaseAdmin';
 
-export type RateTableType = 'tabela_1' | 'tabela_2';
+export type RateTableType = 'tabela_1' | 'tabela_2' | (string & {});
 
 function dispatchRatesEvents(detail: any) {
   if (typeof window !== 'undefined') {
@@ -621,10 +621,43 @@ export function getFlagRateKey(flagIdOrName?: string): string {
 export function getRateForFlagAndInstallment(
   flagKey: string,
   installment: number,
-  tableType: RateTableType = 'tabela_1'
+  tableType: RateTableType = 'tabela_1',
+  customTablesList?: NovaTabelaTaxasResultado[]
 ): number {
+  if (tableType !== 'tabela_1' && tableType !== 'tabela_2') {
+    const list = customTablesList && customTablesList.length > 0 ? customTablesList : memoryCustomTables;
+    const target = list.find(t => t.id === tableType || t.nomeTabela.toLowerCase() === String(tableType).toLowerCase());
+    if (target && target.taxasPorParcelas) {
+      const rates = target.taxasPorParcelas;
+      const normKey = getFlagRateKey(flagKey);
+
+      // 1. Se tiver estrutura por bandeira (ex: { VISA_MASTER: { 1: 7.1 } })
+      if ((rates as any)[normKey] && typeof (rates as any)[normKey] === 'object') {
+        const flagObj = (rates as any)[normKey];
+        const val = flagObj[installment] ?? flagObj[String(installment)];
+        if (val !== undefined && val !== null) return Number(val);
+      }
+      if ((rates as any)[flagKey] && typeof (rates as any)[flagKey] === 'object') {
+        const flagObj = (rates as any)[flagKey];
+        const val = flagObj[installment] ?? flagObj[String(installment)];
+        if (val !== undefined && val !== null) return Number(val);
+      }
+      // 2. Se for estrutura plana direta (ex: { 1: 7.1, 2: 8.25 })
+      const flatVal = (rates as any)[installment] ?? (rates as any)[String(installment)];
+      if (flatVal !== undefined && flatVal !== null) {
+        return Number(flatVal);
+      }
+      // 3. Fallback no primeiro objeto de bandeira se houver
+      const firstVal = Object.values(rates)[0];
+      if (typeof firstVal === 'object' && firstVal !== null) {
+        const val = (firstVal as any)[installment] ?? (firstVal as any)[String(installment)];
+        if (val !== undefined && val !== null) return Number(val);
+      }
+    }
+  }
+
   const normKey = getFlagRateKey(flagKey);
-  const currentRates = getCustomCardRates(tableType);
+  const currentRates = getCustomCardRates(tableType as any);
   const fallbackRates = tableType === 'tabela_1' ? TABELA_1_RATES : TABELA_2_RATES;
   const flagRates = currentRates[normKey] || currentRates['VISA_MASTER'] || fallbackRates['VISA_MASTER'];
   return flagRates?.[installment] ?? 0;
@@ -645,7 +678,8 @@ export function calculateLoanSimulation({
   tipoCalculo,
   bandeiraCartao,
   tableType = 'tabela_1',
-  customTaxa
+  customTaxa,
+  customTablesList
 }: {
   valorDesejado: number;
   parcelas: number;
@@ -653,13 +687,14 @@ export function calculateLoanSimulation({
   bandeiraCartao: string;
   tableType?: RateTableType;
   customTaxa?: number;
+  customTablesList?: NovaTabelaTaxasResultado[];
 }): SimulationCalculationResult {
   const nParcelas = Math.min(18, Math.max(1, Number(parcelas) || 1));
   const nValorDesejado = Math.max(0, Number(valorDesejado) || 0);
 
-  const taxaJuros = customTaxa !== undefined
+  const taxaJuros = customTaxa !== undefined && customTaxa !== null && customTaxa > 0
     ? Number(customTaxa)
-    : getRateForFlagAndInstallment(bandeiraCartao, nParcelas, tableType);
+    : getRateForFlagAndInstallment(bandeiraCartao, nParcelas, tableType, customTablesList);
 
   let valorSolicitado = 0;
   let valorJuros = 0;
@@ -1235,6 +1270,24 @@ export const criar_NovaTabela_Taxas = criarNovaTabelaTaxas;
 // MÉTODOS CRUD NO BANCO DE DADOS PARA TABELAS CUSTOMIZADAS (custom_rate_tables)
 // =========================================================================
 
+let memoryCustomTables: NovaTabelaTaxasResultado[] = [];
+
+export function getMemoryCustomTables(): NovaTabelaTaxasResultado[] {
+  return memoryCustomTables;
+}
+
+export async function getAllTableOptions(): Promise<Array<{ id: string; name: string; description: string; isCustom?: boolean }>> {
+  const base = TABLE_OPTIONS.map(o => ({ ...o, isCustom: false }));
+  const custom = await fetchCustomTablesFromDatabase();
+  const customOptions = custom.map(ct => ({
+    id: ct.id,
+    name: ct.nomeTabela,
+    description: `Faixa: ${ct.faixaTaxas?.min ?? 0}% a ${ct.faixaTaxas?.max ?? 0}% • ${ct.tipoTabela}`,
+    isCustom: true
+  }));
+  return [...base, ...customOptions];
+}
+
 export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasResultado[]> {
   try {
     let { data, error } = await supabase
@@ -1259,11 +1312,11 @@ export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasRe
 
     if (error) {
       console.warn('Aviso ao consultar custom_rate_tables no banco:', error.message);
-      return [];
+      return memoryCustomTables;
     }
 
     if (data && Array.isArray(data)) {
-      return data.map((row: any) => ({
+      const mapped = data.map((row: any) => ({
         id: row.id,
         nomeTabela: row.nome_tabela || row.nomeTabela || 'Tabela Sem Nome',
         tipoTabela: row.tipo_tabela || row.tipoTabela || 'Flex',
@@ -1273,11 +1326,13 @@ export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasRe
         dataCriacao: Number(row.data_criacao || row.dataCriacao || Date.now()),
         dataCriacaoFormatada: row.data_criacao_formatada || row.dataCriacaoFormatada || new Date().toLocaleString('pt-BR')
       }));
+      memoryCustomTables = mapped;
+      return mapped;
     }
   } catch (err) {
     console.error('Erro ao consultar custom_rate_tables no Supabase:', err);
   }
-  return [];
+  return memoryCustomTables;
 }
 
 export async function saveCustomTableToDatabase(table: NovaTabelaTaxasResultado): Promise<{ success: boolean; error?: string }> {
@@ -1313,6 +1368,15 @@ export async function saveCustomTableToDatabase(table: NovaTabelaTaxasResultado)
       console.error('Erro ao salvar custom_rate_tables no Supabase:', error);
       return { success: false, error: error.message };
     }
+
+    // Atualiza cache em memória
+    const idx = memoryCustomTables.findIndex(t => t.id === table.id);
+    if (idx >= 0) {
+      memoryCustomTables[idx] = table;
+    } else {
+      memoryCustomTables.push(table);
+    }
+
     return { success: true };
   } catch (err: any) {
     console.error('Exceção ao salvar custom_rate_tables:', err);
@@ -1343,6 +1407,8 @@ export async function deleteCustomTableFromDatabase(tableId: string): Promise<{ 
       console.error('Erro ao excluir custom_rate_tables no Supabase:', error);
       return { success: false, error: error.message };
     }
+
+    memoryCustomTables = memoryCustomTables.filter(t => t.id !== tableId);
     return { success: true };
   } catch (err: any) {
     console.error('Exceção ao excluir custom_rate_tables:', err);

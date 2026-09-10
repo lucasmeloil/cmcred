@@ -69,6 +69,7 @@ const ReportsManager: React.FC = () => {
   const [loans, setLoans] = useState<any[]>([]);
   const [finance, setFinance] = useState<any[]>([]);
   const [consultants, setConsultants] = useState<any[]>([]);
+  const [machines, setMachines] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Filters State
@@ -77,6 +78,7 @@ const ReportsManager: React.FC = () => {
   const [endDate, setEndDate] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending' | 'rejected'>('all');
   const [consultantFilter, setConsultantFilter] = useState<string>('all');
+  const [machineFilter, setMachineFilter] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   // Fetch initial data
@@ -90,10 +92,11 @@ const ReportsManager: React.FC = () => {
         loansQuery = loansQuery.eq('consultant_id', currentUser.id);
       }
 
-      const [loansRes, financeRes, profilesRes] = await Promise.all([
+      const [loansRes, financeRes, profilesRes, machinesRes] = await Promise.all([
         loansQuery,
         supabase.from('finance').select('*').order('due_date', { ascending: false }),
-        supabase.from('profiles').select('id, full_name, role')
+        supabase.from('profiles').select('id, full_name, role'),
+        supabase.from('machines').select('id, name').order('name')
       ]);
 
       if (loansRes.data) {
@@ -109,6 +112,9 @@ const ReportsManager: React.FC = () => {
       if (profilesRes.data) {
         setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
       }
+      if (machinesRes.data) {
+        setMachines(machinesRes.data);
+      }
     } catch (err: any) {
       console.error('Erro ao buscar dados do relatório:', err);
     } finally {
@@ -122,7 +128,7 @@ const ReportsManager: React.FC = () => {
 
   // Sincronização em tempo real inteligente com Auto-Heal e re-fetch
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
-    tables: ['loans', 'finance'],
+    tables: ['loans', 'finance', 'machines'],
     onDataChange: fetchData,
     heartbeatIntervalMs: 45000,
   });
@@ -219,7 +225,17 @@ const ReportsManager: React.FC = () => {
         matchConsultant = loanRaw?.consultant_id === consultantFilter;
       }
 
-      // 4. Busca Livre
+      // 4. Maquininha POS
+      let matchMachine = true;
+      if (machineFilter !== 'all') {
+        const loanRaw = loans.find(raw => raw.id === l.id);
+        const rawMachineId = loanRaw?.machine_id ? String(loanRaw.machine_id) : '';
+        matchMachine = rawMachineId === machineFilter || 
+                       l.machineName.toLowerCase() === machineFilter.toLowerCase() ||
+                       l.machineName === machineFilter;
+      }
+
+      // 5. Busca Livre
       const term = searchTerm.toLowerCase();
       const matchSearch = 
         l.clientName.toLowerCase().includes(term) || 
@@ -228,9 +244,23 @@ const ReportsManager: React.FC = () => {
         l.machineName.toLowerCase().includes(term) ||
         l.id.toLowerCase().includes(term);
 
-      return matchPeriod && matchStatus && matchConsultant && matchSearch;
+      return matchPeriod && matchStatus && matchConsultant && matchMachine && matchSearch;
     });
-  }, [loansReportList, period, startDate, endDate, statusFilter, consultantFilter, searchTerm, loans]);
+  }, [loansReportList, period, startDate, endDate, statusFilter, consultantFilter, machineFilter, searchTerm, loans]);
+
+  // Lista unificada de maquininhas disponíveis para filtragem
+  const uniqueMachinesList = useMemo(() => {
+    const map = new Map<string, string>();
+    machines.forEach(m => {
+      if (m.name) map.set(m.id || m.name, m.name);
+    });
+    loansReportList.forEach(l => {
+      if (l.machineName && !Array.from(map.values()).includes(l.machineName)) {
+        map.set(l.machineName, l.machineName);
+      }
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [machines, loansReportList]);
 
   // Totais agregados
   const totals = useMemo(() => {
@@ -744,6 +774,16 @@ const ReportsManager: React.FC = () => {
             <option value="all">Todos os Operadores</option>
             {consultants.map(c => (
               <option key={c.id} value={c.id}>{c.full_name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label style={{ display: 'block', color: '#0f172a', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Filtrar Maquininha POS</label>
+          <select value={machineFilter} onChange={e => setMachineFilter(e.target.value)} style={inputStyle}>
+            <option value="all">Todas as Maquininhas</option>
+            {uniqueMachinesList.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
         </div>
