@@ -39,10 +39,13 @@ import {
   type RateTableType,
   TABLE_OPTIONS,
   fetchCustomTablesFromDatabase,
+  getMemoryCustomTables,
   type NovaTabelaTaxasResultado
 } from '../lib/rates';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { liveSyncBus } from '../lib/liveSyncBus';
+import { loadCachedData } from '../lib/dataCache';
 
 const CreateLoan: React.FC = () => {
   const { currentUser, addNotification, logAudit } = useAuth();
@@ -57,13 +60,13 @@ const CreateLoan: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // Dados para selects
+  // Dados para selects (inicializados instantaneamente a partir do cache)
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [machines, setMachines] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>(() => loadCachedData<Customer[]>('cmcred_cache_customers', []) || []);
+  const [machines, setMachines] = useState<any[]>(() => loadCachedData<any[]>('cmcred_cache_machines', []) || []);
   const [consultants, setConsultants] = useState<any[]>([]);
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
-  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
+  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>(() => getMemoryCustomTables());
 
   // Modo de seleção de cliente
   const [selectionType, setSelectionType] = useState<'customer' | 'lead' | 'manual'>('customer');
@@ -123,7 +126,7 @@ const CreateLoan: React.FC = () => {
         fetchCustomTablesFromDatabase()
       ]);
 
-      if (customTablesData) {
+      if (customTablesData && customTablesData.length > 0) {
         setCustomTables(customTablesData);
       }
 
@@ -146,8 +149,8 @@ const CreateLoan: React.FC = () => {
         }
       }
 
-      if (leadsRes.data) setLeads(leadsRes.data);
-      if (customersRes.data) {
+      if (leadsRes.data && leadsRes.data.length > 0) setLeads(leadsRes.data);
+      if (customersRes.data && customersRes.data.length > 0) {
         setCustomers(customersRes.data);
         setFormData(prev => {
           if (!prev.customer_id && customersRes.data && customersRes.data.length > 0) {
@@ -203,6 +206,12 @@ const CreateLoan: React.FC = () => {
       console.error('Error fetching data:', err);
     }
   };
+
+  useRealtimeSync({
+    tables: ['customers', 'machines', 'simulator_rates'],
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000,
+  });
 
   useEffect(() => {
     fetchData();
@@ -476,6 +485,20 @@ const CreateLoan: React.FC = () => {
 
       await logAudit('operação', `Empréstimo de R$ ${formatCurrency(safeGrossAmount)} em ${formData.installments}x (${machineLabel}) registrado para ${personName}`);
       addNotification(`Operação de ${formData.installments}x (${machineLabel}) finalizada para ${personName} com sucesso!`, 'sucesso');
+
+      // Notificação instantânea (sub-100ms) para todos os Administradores conectados simultaneamente
+      liveSyncBus.broadcast('LOAN_CREATED', {
+        loanId: createdLoanId,
+        clientName: personName,
+        grossAmount: safeGrossAmount,
+        netAmount: pixToClient,
+        installments: formData.installments,
+        machine: machineLabel
+      }, {
+        id: currentUser?.id,
+        name: currentUser?.nome || currentUser?.email || 'Consultor',
+        role: currentUser?.perfil
+      });
 
       setSuccess(true);
       try {

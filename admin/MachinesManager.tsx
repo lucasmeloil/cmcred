@@ -123,7 +123,8 @@ const MachinesManager: React.FC = () => {
         [{ data: null }, { data: null }]
       );
 
-      if (machRes?.data) {
+      // PROTEÇÃO: só atualiza se vieram dados reais
+      if (machRes?.data && machRes.data.length > 0) {
         const mapped = machRes.data.map((m: any) => ({
           ...m,
           bank_name: m.banks?.name || 'Banco Geral',
@@ -133,7 +134,7 @@ const MachinesManager: React.FC = () => {
         setMachines(mapped);
         saveCachedData(CACHE_KEY_MACHINES, mapped);
       }
-      if (bankRes?.data) {
+      if (bankRes?.data && bankRes.data.length > 0) {
         setBanks(bankRes.data);
         saveCachedData(CACHE_KEY_BANKS, bankRes.data);
       }

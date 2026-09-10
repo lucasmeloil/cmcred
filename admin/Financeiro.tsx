@@ -122,11 +122,17 @@ const Financeiro: React.FC = () => {
         [{ data: null }, { data: null }]
       );
 
-      if (financeRes?.data) {
+      // PROTEÇÃO CRÍTICA: preserva dados existentes se query retornou vazio ([] ou null).
+      // Cobre o caso de JWT refresh em andamento quando a aba retorna.
+      if (financeRes?.data && financeRes.data.length > 0) {
         setData(financeRes.data);
         saveCachedData(CACHE_KEY_FINANCE, financeRes.data);
+      } else if (dataRef.current.length === 0) {
+        setData([]);
       }
-      if (loansRes?.data) {
+      // Se retornou [] mas já há dados: NÃO atualiza (preserva tela)
+
+      if (loansRes?.data && loansRes.data.length > 0) {
         const mappedLoans = loansRes.data.map((l: any) => ({
           ...l,
           lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',

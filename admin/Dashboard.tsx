@@ -183,9 +183,13 @@ const Dashboard: React.FC = () => {
         [{ data: null }, { count: 0 }, { count: 0 }, { data: null }]
       );
 
-      // Se a resposta falhar mas já tínhamos dados em tela, preservar sem zerar
-      if (!loansRes?.data && recentLoansRef.current.length > 0) {
-        return;
+      // PROTEÇÃO CRÍTICA: Se resposta vier vazia (null OU []) mas já temos dados em tela,
+      // NÃO atualiza o state — preserva dados existentes sem zerar a interface.
+      // Isso cobre o caso de query rodando durante o refresh do JWT (retorna [] por RLS).
+      const loansOk = loansRes?.data && loansRes.data.length > 0;
+      const hasExistingLoans = recentLoansRef.current.length > 0;
+      if (!loansOk && hasExistingLoans) {
+        return; // Mantém dados existentes — não zera a tela
       }
 
       let loans = loansRes?.data || [];

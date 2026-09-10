@@ -103,9 +103,11 @@ const LoanRequests: React.FC = () => {
         [{ data: null }, { data: null }, { data: null }]
       );
 
+      // PROTEÇÃO CRÍTICA: Não sobrescreve state com array vazio se já temos dados.
+      // Cobre queries rodando durante refresh JWT (retorna [] por RLS).
       if (loansRes?.error) {
-        console.warn('Erro ou latência ao consultar empréstimos:', loansRes.error);
-      } else if (loansRes?.data && Array.isArray(loansRes.data)) {
+        console.warn('Erro ao consultar empréstimos:', loansRes.error);
+      } else if (loansRes?.data && loansRes.data.length > 0) {
         let rawLoans = loansRes.data;
         if (!isAdmin && currentUser?.id) {
           rawLoans = rawLoans.filter((l: any) => l.consultant_id === currentUser.id);
@@ -120,14 +122,18 @@ const LoanRequests: React.FC = () => {
         }));
         setLoans(mapped);
         saveCachedData(CACHE_KEY_LOANS, mapped);
+      } else if (loansRef.current.length === 0) {
+        // Primeiro carregamento sem dados — mostra vazio
+        setLoans([]);
       }
+      // Se retornou [] mas já há dados: preserva state existente
 
-      if (banksRes?.data && Array.isArray(banksRes.data) && banksRes.data.length > 0) {
+      if (banksRes?.data && banksRes.data.length > 0) {
         setBanks(banksRes.data);
         saveCachedData(CACHE_KEY_LOAN_BANKS, banksRes.data);
       }
 
-      if (machinesRes?.data && Array.isArray(machinesRes.data) && machinesRes.data.length > 0) {
+      if (machinesRes?.data && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);
         saveCachedData(CACHE_KEY_LOAN_MACHINES, machinesRes.data);
       }

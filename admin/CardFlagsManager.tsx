@@ -3,14 +3,18 @@ import { supabase } from '../lib/supabase';
 import { Plus, Trash2, Edit3, CreditCard } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import type { CardFlag } from './types';
+import { loadCachedData, saveCachedData } from '../lib/dataCache';
+import { useRealtimeSync } from '../lib/useRealtimeSync';
+
+const CACHE_KEY_FLAGS = 'cmcred_cache_card_flags_db';
 
 const CardFlagsManager: React.FC = () => {
   const { addNotification, currentUser, authUserEmail, showConfirm } = useAuth();
   const isSuperAdmin = authUserEmail?.toLowerCase().includes('admin') || 
                        authUserEmail?.toLowerCase().includes('cmcred') || 
                        currentUser?.perfil === 'admin';
-  const [flags, setFlags] = useState<CardFlag[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [flags, setFlags] = useState<CardFlag[]>(() => loadCachedData<CardFlag[]>(CACHE_KEY_FLAGS, []) || []);
+  const [loading, setLoading] = useState(() => !(loadCachedData<CardFlag[]>(CACHE_KEY_FLAGS)?.length));
   const [showModal, setShowModal] = useState(false);
   
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -23,12 +27,24 @@ const CardFlagsManager: React.FC = () => {
     special: false
   });
 
-  const fetchData = async () => {
-    setLoading(true);
-    const { data } = await supabase.from('card_flags').select('*').order('name', { ascending: true });
-    if (data) setFlags(data);
-    setLoading(false);
+  const fetchData = async (isSilent = false) => {
+    if (!isSilent && flags.length === 0) setLoading(true);
+    try {
+      const { data } = await supabase.from('card_flags').select('*').order('name', { ascending: true });
+      if (data && data.length > 0) {
+        setFlags(data);
+        saveCachedData(CACHE_KEY_FLAGS, data);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useRealtimeSync({
+    table: 'card_flags',
+    onDataChange: fetchData,
+    heartbeatIntervalMs: 45000
+  });
 
   useEffect(() => {
     fetchData();

@@ -35,6 +35,10 @@ import {
   TABLE_OPTIONS
 } from '../lib/rates';
 
+import { loadCachedData, saveCachedData } from '../lib/dataCache';
+
+const CACHE_KEY_SIM_DRAFT = 'cmcred_cache_simulator_draft';
+
 const Simulator: React.FC = () => {
   const { currentUser } = useAuth();
   const isAdmin = currentUser?.perfil === 'admin' ||
@@ -44,15 +48,39 @@ const Simulator: React.FC = () => {
 
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
   const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
-  const [tabelaTaxa, setTabelaTaxa] = useState<RateTableType>('tabela_1');
-  const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>('Valor Líquido');
-  const [parcelas, setParcelas] = useState<number>(8);
-  const [valorDesejado, setValorDesejado] = useState<number>(1800);
-  const [bandeiraCartao, setBandeiraCartao] = useState<string>('VISA_MASTER');
-  const [clientPhone, setClientPhone] = useState<string>('');
+  const [tabelaTaxa, setTabelaTaxa] = useState<RateTableType>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.tabelaTaxa || 'tabela_1';
+  });
+  const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.tipoCalculo || 'Valor Líquido';
+  });
+  const [parcelas, setParcelas] = useState<number>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.parcelas || 8;
+  });
+  const [valorDesejado, setValorDesejado] = useState<number>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.valorDesejado ?? 1800;
+  });
+  const [bandeiraCartao, setBandeiraCartao] = useState<string>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.bandeiraCartao || 'VISA_MASTER';
+  });
+  const [clientPhone, setClientPhone] = useState<string>(() => {
+    return loadCachedData<any>(CACHE_KEY_SIM_DRAFT)?.clientPhone || '';
+  });
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [ratesVersion, setRatesVersion] = useState(0);
+
+  // Salva rascunho continuamente para não perder simulações ao alternar abas
+  useEffect(() => {
+    saveCachedData(CACHE_KEY_SIM_DRAFT, {
+      tabelaTaxa,
+      tipoCalculo,
+      parcelas,
+      valorDesejado,
+      bandeiraCartao,
+      clientPhone
+    });
+  }, [tabelaTaxa, tipoCalculo, parcelas, valorDesejado, bandeiraCartao, clientPhone]);
 
   const loadRates = React.useCallback(async () => {
     try {

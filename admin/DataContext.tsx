@@ -5,7 +5,13 @@ import { useAuth } from './AuthContext';
 import type { LoanRequest, Customer, FinanceEntry, Machine, Bank } from './types';
 import { calculateLoanFinancials, fetchRatesFromDatabase, TABELA_1_RATES, TABELA_2_RATES } from '../lib/rates';
 import { useRealtimeSync, type RealtimeSyncStatus } from '../lib/useRealtimeSync';
-import { withQueryTimeout } from '../lib/dataCache';
+import { withQueryTimeout, loadCachedData, saveCachedData } from '../lib/dataCache';
+
+const CACHE_KEY_ALL_LOANS = 'cmcred_cache_data_loans';
+const CACHE_KEY_ALL_CUSTOMERS = 'cmcred_cache_data_customers';
+const CACHE_KEY_ALL_FINANCE = 'cmcred_cache_data_finance';
+const CACHE_KEY_ALL_MACHINES = 'cmcred_cache_data_machines';
+const CACHE_KEY_ALL_BANKS = 'cmcred_cache_data_banks';
 
 // =========================================================================
 // TIPOS DO CONTEXTO DE DADOS EM TEMPO REAL
@@ -57,21 +63,24 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                        currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' ||
                        currentUser?.perfil === 'admin';
 
-  // Estados em memória (nunca dependentes de snapshot obsoleto de localStorage/sessionStorage)
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [finance, setFinance] = useState<FinanceEntry[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [banks, setBanks] = useState<Bank[]>([]);
+  // Estados com inicialização instantânea a partir do cache local (zero delay ao alternar abas)
+  const [loans, setLoans] = useState<LoanRequest[]>(() => loadCachedData<LoanRequest[]>(CACHE_KEY_ALL_LOANS, []) || []);
+  const [customers, setCustomers] = useState<Customer[]>(() => loadCachedData<Customer[]>(CACHE_KEY_ALL_CUSTOMERS, []) || []);
+  const [finance, setFinance] = useState<FinanceEntry[]>(() => loadCachedData<FinanceEntry[]>(CACHE_KEY_ALL_FINANCE, []) || []);
+  const [machines, setMachines] = useState<Machine[]>(() => loadCachedData<Machine[]>(CACHE_KEY_ALL_MACHINES, []) || []);
+  const [banks, setBanks] = useState<Bank[]>(() => loadCachedData<Bank[]>(CACHE_KEY_ALL_BANKS, []) || []);
   const [ratesT1, setRatesT1] = useState<Record<string, Record<number, number>>>(TABELA_1_RATES);
   const [ratesT2, setRatesT2] = useState<Record<string, Record<number, number>>>(TABELA_2_RATES);
   
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => {
+    const cached = loadCachedData<LoanRequest[]>(CACHE_KEY_ALL_LOANS);
+    return !(cached && cached.length > 0);
+  });
   const [isRevalidating, setIsRevalidating] = useState<boolean>(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
   // Referências para evitar perda de dados por closure ou condições de corrida
-  const hasLoadedOnceRef = useRef<boolean>(false);
+  const hasLoadedOnceRef = useRef<boolean>(loans.length > 0 || customers.length > 0 || finance.length > 0);
   const currentLoansRef = useRef<LoanRequest[]>([]);
   const currentFinanceRef = useRef<FinanceEntry[]>([]);
   const currentCustomersRef = useRef<Customer[]>([]);
@@ -158,7 +167,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Se a resposta vier vazia por causa de falha de conexão/token durante o wake-up,
       // NUNCA zere os dados se já tínhamos dados válidos carregados na memória!
       // ===================================================================
-      if (rawLoans.length > 0 || !hasLoadedOnceRef.current) {
+      if (rawLoans.length > 0) {
         const mappedLoans = rawLoans.map((l: any) => ({
           ...l,
           lead_name: l.customers?.name || l.leads?.name || 'Cliente Identificado',
@@ -168,18 +177,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
         }));
         setLoans(mappedLoans);
+        saveCachedData(CACHE_KEY_ALL_LOANS, mappedLoans);
+      } else if (currentLoansRef.current.length === 0) {
+        setLoans([]);
       }
-      if (rawCustomers.length > 0 || !hasLoadedOnceRef.current) {
+
+      if (rawCustomers.length > 0) {
         setCustomers(rawCustomers);
+        saveCachedData(CACHE_KEY_ALL_CUSTOMERS, rawCustomers);
+      } else if (currentCustomersRef.current.length === 0) {
+        setCustomers([]);
       }
-      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
+
+      if (rawFinance.length > 0) {
         setFinance(rawFinance);
+        saveCachedData(CACHE_KEY_ALL_FINANCE, rawFinance);
+      } else if (currentFinanceRef.current.length === 0) {
+        setFinance([]);
       }
       if (machRes?.data && machRes.data.length > 0) {
         setMachines(machRes.data);
+        saveCachedData(CACHE_KEY_ALL_MACHINES, machRes.data);
       }
       if (banksRes?.data && banksRes.data.length > 0) {
         setBanks(banksRes.data);
+        saveCachedData(CACHE_KEY_ALL_BANKS, banksRes.data);
       }
       if (ratesRes) {
         if (ratesRes.ratesT1) setRatesT1(ratesRes.ratesT1);
@@ -204,9 +226,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // e mantém heartbeat de contingência a cada 45s.
   // =======================================================================
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
-    tables: ['loans', 'finance', 'customers', 'machines', 'simulator_rates', 'banks'],
+    tables: ['loans', 'finance', 'customers', 'machines', 'simulator_rates', 'custom_rate_tables', 'banks'],
     onDataChange: revalidateAll,
-    heartbeatIntervalMs: 45000,
+    heartbeatIntervalMs: 60000,
   });
 
   // =======================================================================

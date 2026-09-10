@@ -8,17 +8,43 @@ import {
   type CardFlagOption,
   type RateTableType
 } from '../lib/rates';
+import { loadCachedData, saveCachedData } from '../lib/dataCache';
+
+const CACHE_KEY_PUBLIC_SIM = 'cmcred_public_sim_draft';
 
 const Simulator: React.FC = () => {
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
   const tabelaTaxa: RateTableType = 'tabela_2';
-  const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>('Valor Líquido');
+  const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.tipoCalculo || 'Valor Líquido';
+  });
   const [service, setService] = useState<string>('troca-limite');
-  const [amount, setAmount] = useState<number>(1000);
-  const [installments, setInstallments] = useState<number>(10);
-  const [name, setName] = useState<string>('');
-  const [phone, setPhone] = useState<string>('');
-  const [selectedFlagKey, setSelectedFlagKey] = useState<string>('VISA_MASTER');
+  const [amount, setAmount] = useState<number>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.amount ?? 1000;
+  });
+  const [installments, setInstallments] = useState<number>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.installments || 10;
+  });
+  const [name, setName] = useState<string>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.name || '';
+  });
+  const [phone, setPhone] = useState<string>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.phone || '';
+  });
+  const [selectedFlagKey, setSelectedFlagKey] = useState<string>(() => {
+    return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.selectedFlagKey || 'VISA_MASTER';
+  });
+
+  useEffect(() => {
+    saveCachedData(CACHE_KEY_PUBLIC_SIM, {
+      tipoCalculo,
+      amount,
+      installments,
+      name,
+      phone,
+      selectedFlagKey
+    });
+  }, [tipoCalculo, amount, installments, name, phone, selectedFlagKey]);
 
   useEffect(() => {
     let isMounted = true;

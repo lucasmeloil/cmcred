@@ -32,7 +32,21 @@ const App: React.FC = () => {
   // Route to admin / consultant panel if URL starts with or contains admin/consultor/login/painel/acesso or has active user session
   const hasUserSession = () => {
     try {
-      return !!localStorage.getItem('cmcred_active_user_session');
+      if (typeof window === 'undefined') return false;
+      let hasSbToken = false;
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith('sb-') && k.endsWith('-auth-token')) {
+          hasSbToken = !!window.localStorage.getItem(k);
+          if (hasSbToken) break;
+        }
+      }
+      return (
+        hasSbToken ||
+        !!localStorage.getItem('cmcred_active_user_session') ||
+        !!localStorage.getItem('cmcred_cached_user_profile') ||
+        !!localStorage.getItem('cmcred_auth_token')
+      );
     } catch {
       return false;
     }
@@ -45,7 +59,7 @@ const App: React.FC = () => {
     '#tutoriais', '#simulador', '#novo_emprestimo', '#bandeiras'
   ];
 
-  const isExplicitHome = currentPath.includes('#site') || currentPath.includes('#home') || currentPath === '/';
+  const isExplicitHome = currentPath.includes('#site') || currentPath.includes('#home');
 
   const isPanel = 
     (!isExplicitHome && hasUserSession()) ||

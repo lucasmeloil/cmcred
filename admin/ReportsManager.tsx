@@ -112,22 +112,26 @@ const ReportsManager: React.FC = () => {
         [{ data: null }, { data: null }, { data: null }, { data: null }]
       );
 
-      if (loansRes?.data) {
+      // PROTEÇÃO CRÍTICA: só atualiza state se veio dados reais.
+      // Preserva tela se query retornou [] durante refresh de JWT.
+      if (loansRes?.data && loansRes.data.length > 0) {
         let fetchedLoans = loansRes.data;
         if (!isAdmin && currentUser?.id) {
           fetchedLoans = fetchedLoans.filter((l: any) => l.consultant_id === currentUser.id);
         }
         setLoans(fetchedLoans);
         saveCachedData(CACHE_KEY_REPORTS_LOANS, fetchedLoans);
+      } else if (loansRef.current.length === 0) {
+        setLoans([]);
       }
-      if (financeRes?.data) {
+      if (financeRes?.data && financeRes.data.length > 0) {
         setFinance(financeRes.data);
         saveCachedData(CACHE_KEY_REPORTS_FINANCE, financeRes.data);
       }
-      if (profilesRes?.data) {
+      if (profilesRes?.data && profilesRes.data.length > 0) {
         setConsultants(profilesRes.data.filter((p: any) => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
       }
-      if (machinesRes?.data) {
+      if (machinesRes?.data && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);
         saveCachedData(CACHE_KEY_REPORTS_MACHINES, machinesRes.data);
       }

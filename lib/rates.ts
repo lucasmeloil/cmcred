@@ -1270,7 +1270,17 @@ export const criar_NovaTabela_Taxas = criarNovaTabelaTaxas;
 // MÉTODOS CRUD NO BANCO DE DADOS PARA TABELAS CUSTOMIZADAS (custom_rate_tables)
 // =========================================================================
 
-let memoryCustomTables: NovaTabelaTaxasResultado[] = [];
+const CACHE_CUSTOM_TABLES_KEY = 'cmcred_custom_rate_tables';
+
+let memoryCustomTables: NovaTabelaTaxasResultado[] = (() => {
+  try {
+    if (typeof window === 'undefined') return [];
+    const raw = window.localStorage.getItem(CACHE_CUSTOM_TABLES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+})();
 
 export function getMemoryCustomTables(): NovaTabelaTaxasResultado[] {
   return memoryCustomTables;
@@ -1327,6 +1337,11 @@ export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasRe
         dataCriacaoFormatada: row.data_criacao_formatada || row.dataCriacaoFormatada || new Date().toLocaleString('pt-BR')
       }));
       memoryCustomTables = mapped;
+      try {
+        if (typeof window !== 'undefined' && mapped.length > 0) {
+          window.localStorage.setItem(CACHE_CUSTOM_TABLES_KEY, JSON.stringify(mapped));
+        }
+      } catch {}
       return mapped;
     }
   } catch (err) {

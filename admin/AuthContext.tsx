@@ -3,6 +3,8 @@ import type { AdminUser, Notification, UserPermissions } from './types';
 import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
+import { loadCachedData, saveCachedData, clearCachedData } from '../lib/dataCache';
+import { liveSyncBus } from '../lib/liveSyncBus';
 import {
   SUPER_ADMIN_EMAIL,
   SUPER_ADMIN_EMAILS,
@@ -41,13 +43,24 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const CACHED_USER_KEY = 'cmcred_active_user_session';
+const CACHED_USER_PROFILE_KEY = 'cmcred_cached_user_profile';
+const ACTIVE_SESSION_FLAG_KEY = 'cmcred_active_user_session';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(() => {
     try {
-      const cached = localStorage.getItem(CACHED_USER_KEY);
-      if (cached) return JSON.parse(cached);
+      const cached = loadCachedData<AdminUser>(CACHED_USER_PROFILE_KEY);
+      if (cached && typeof cached === 'object' && cached.id) {
+        return cached;
+      }
+      // Fallback legado com proteção para não aceitar booleano 'true'
+      const legacyRaw = localStorage.getItem(ACTIVE_SESSION_FLAG_KEY);
+      if (legacyRaw && legacyRaw !== 'true') {
+        const legacy = JSON.parse(legacyRaw);
+        if (legacy && typeof legacy === 'object' && legacy.id) {
+          return legacy;
+        }
+      }
     } catch {}
     return null;
   });
@@ -56,7 +69,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(() => {
     try {
       // Se já possui usuário em cache no localStorage, não bloqueia com loading spinner
-      return !localStorage.getItem(CACHED_USER_KEY);
+      return !loadCachedData(CACHED_USER_PROFILE_KEY);
     } catch {
       return true;
     }
@@ -177,9 +190,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setCurrentUser(userToSet);
-      try {
-        localStorage.setItem(CACHED_USER_KEY, JSON.stringify(userToSet));
-      } catch {}
+      saveCachedData(CACHED_USER_PROFILE_KEY, userToSet);
+      try { localStorage.setItem(ACTIVE_SESSION_FLAG_KEY, 'true'); } catch {}
     } catch (err) {
       console.error('Error fetching profile, using fallback:', err);
       if (fallbackEmail || currentUserRef.current?.email) {
@@ -218,9 +230,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           current.perfil !== fallbackUser.perfil
         ) {
           setCurrentUser(fallbackUser);
-          try {
-            localStorage.setItem(CACHED_USER_KEY, JSON.stringify(fallbackUser));
-          } catch {}
+          saveCachedData(CACHED_USER_PROFILE_KEY, fallbackUser);
+          try { localStorage.setItem(ACTIVE_SESSION_FLAG_KEY, 'true'); } catch {}
         }
       }
     } finally {
@@ -257,7 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       activeSessionUserIdRef.current = newSession?.user?.id || null;
       if (newSession?.user?.id) {
         setSession(newSession);
-        try { localStorage.setItem('cmcred_active_user_session', 'true'); } catch {}
+        try { localStorage.setItem(ACTIVE_SESSION_FLAG_KEY, 'true'); } catch {}
         await fetchProfile(newSession.user.id, newSession.user.email);
       } else if (_event === 'SIGNED_OUT') {
         // ITEM 6: Garantir que o botão "Sair do Sistema" seja o ÚNICO gatilho de logout — NUNCA por inatividade ou troca de aba!
@@ -265,9 +276,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSession(null);
           setCurrentUser(null);
           activeSessionUserIdRef.current = null;
+          clearCachedData(CACHED_USER_PROFILE_KEY);
           try { 
-            localStorage.removeItem(CACHED_USER_KEY); 
-            localStorage.removeItem('cmcred_active_user_session');
+            localStorage.removeItem(ACTIVE_SESSION_FLAG_KEY);
           } catch {}
         } else {
           // Ignora logout involuntário e preserva sessão em cache
@@ -302,58 +313,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
-    // Verificação periódica de validade do token (a cada 3 minutos) e renovação silenciosa (Item 2)
-    const tokenRefreshInterval = setInterval(async () => {
-      if (!isMounted || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
-      try {
-        const { data: { session: curSess } } = await supabase.auth.getSession();
-        if (curSess?.expires_at) {
-          const nowSec = Math.floor(Date.now() / 1000);
-          const timeUntilExpiry = curSess.expires_at - nowSec;
-          // Se expira em menos de 15 minutos (900s), renova silenciosamente
-          if (timeUntilExpiry < 900) {
-            const { data: refreshed } = await supabase.auth.refreshSession();
-            if (refreshed?.session) {
-              setSession(refreshed.session);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Verificação silenciosa de token:', err);
-      }
-    }, 180000);
-
-    // Revalidação suave de sessão ao retornar para a aba (Item 5: visibilitychange e focus com cooldown de 15s)
-    let lastVisibilityCheckTime = 0;
-    const handleVisibilityChange = async () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && isMounted) {
-        const now = Date.now();
-        if (now - lastVisibilityCheckTime < 15000) return;
-        lastVisibilityCheckTime = now;
-        try {
-          const { data: { session: activeSession } } = await supabase.auth.getSession();
-          if (activeSession?.user) {
-            setSession(activeSession);
-            activeSessionUserIdRef.current = activeSession.user.id;
-            if (!currentUserRef.current) {
-              await fetchProfile(activeSession.user.id, activeSession.user.email);
-            }
-          }
-        } catch (e) {
-          console.warn('Revalidação de sessão no visibilitychange:', e);
-        }
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleVisibilityChange);
-
     return () => {
       isMounted = false;
       clearTimeout(safetyTimer);
-      clearInterval(tokenRefreshInterval);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleVisibilityChange);
       subscription.unsubscribe();
       supabase.removeChannel(profileChannel);
     };
@@ -410,9 +372,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
     setCurrentUser(null);
     setSession(null);
+    clearCachedData(CACHED_USER_PROFILE_KEY);
     try { 
-      localStorage.removeItem(CACHED_USER_KEY); 
-      localStorage.removeItem('cmcred_active_user_session');
+      localStorage.removeItem(ACTIVE_SESSION_FLAG_KEY);
     } catch {}
     isExplicitLogoutRef.current = false;
   }, []);
@@ -442,6 +404,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isNew: false } : n));
     }, 6000);
   }, []);
+
+  // Inscrição no barramento de eventos em tempo real para avisar o Admin instantaneamente
+  useEffect(() => {
+    const unsubscribe = liveSyncBus.subscribe((event) => {
+      const isMe = event.authorId && currentUser?.id && event.authorId === currentUser.id;
+      if (isMe) return;
+
+      const isAdmin = currentUser?.perfil === 'admin' ||
+                      currentUser?.email?.toLowerCase().includes('admin') ||
+                      currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
+                      currentUser?.email?.toLowerCase() === 'lucas@teste.com.br';
+
+      if (event.type === 'LOAN_CREATED') {
+        const valStr = event.data?.grossAmount 
+          ? `R$ ${Number(event.data.grossAmount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` 
+          : '';
+        const clientStr = event.data?.clientName ? ` para ${event.data.clientName}` : '';
+        const authorStr = event.authorName || 'Consultor';
+
+        if (isAdmin) {
+          addNotification(`🚨 Novo Empréstimo! ${authorStr} lançou ${valStr} (${event.data?.installments || ''}x)${clientStr}`, 'solicitacao');
+        } else {
+          addNotification(`⚡ Nova operação registrada no sistema (${authorStr})`, 'info');
+        }
+      } else if (event.type === 'CUSTOMER_CREATED') {
+        const clientName = event.data?.name || 'Novo Cliente';
+        const authorStr = event.authorName || 'Consultor';
+        if (isAdmin) {
+          addNotification(`👤 Novo Cliente! ${authorStr} cadastrou ${clientName}`, 'lead');
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [currentUser, addNotification]);
 
   const logAudit = useCallback(async (_action: string, _description: string) => {
     // Sistema de auditoria desativado para otimizar recursos do Supabase

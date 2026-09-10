@@ -11,11 +11,12 @@ import { validatePixKey, PixValidationResult } from '../lib/pixValidator';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+import { liveSyncBus } from '../lib/liveSyncBus';
 
 const CACHE_KEY_PEOPLE = 'cmcred_cache_customers';
 
 const PeopleManager: React.FC = () => {
-  const { addNotification, logAudit, showConfirm, isSuperAdmin, canDeleteRecords } = useAuth();
+  const { addNotification, logAudit, showConfirm, isSuperAdmin, canDeleteRecords, currentUser } = useAuth();
   const [people, setPeople] = useState<Customer[]>(() => loadCachedData<Customer[]>(CACHE_KEY_PEOPLE, []) || []);
   const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<Customer[]>(CACHE_KEY_PEOPLE)?.length));
   const peopleRef = useRef<Customer[]>(people);
@@ -312,6 +313,18 @@ const PeopleManager: React.FC = () => {
       if (!error) {
         await logAudit('criação', `Novo cadastro criado: ${payload.name} (Chave PIX: ${payload.pix_key || 'N/A'}, CEP: ${payload.cep || 'Nenhum'}).`);
         addNotification(`${payload.name} cadastrado com sucesso!`, 'sucesso');
+
+        // Notificação instantânea para o Administrador e equipe conectada
+        liveSyncBus.broadcast('CUSTOMER_CREATED', {
+          name: payload.name,
+          cpf: payload.cpf,
+          phone: payload.phone
+        }, {
+          id: currentUser?.id,
+          name: currentUser?.nome || currentUser?.email || 'Consultor',
+          role: currentUser?.perfil
+        });
+
         fetchPeople();
         handleClose();
       } else {
