@@ -29,7 +29,10 @@ import type { Bank } from './types';
 import { RateInput } from './RateInput';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
 
+const CACHE_KEY_MACHINES = 'cmcred_cache_machines_list';
+const CACHE_KEY_BANKS = 'cmcred_cache_banks_list';
 
 // Baseline de custo MDR padrão de mercado para adquirentes (Stone, PagBank, Cielo, etc.)
 // 100% ajustável pelo administrador
@@ -67,9 +70,12 @@ const MachinesManager: React.FC = () => {
   const { addNotification, currentUser, logAudit, showConfirm, isSuperAdmin, isConsultant, canManageMachines } = useAuth();
   const isAdmin = isSuperAdmin;
   
-  const [machines, setMachines] = useState<MachineModel[]>([]);
-  const [banks, setBanks] = useState<Bank[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [machines, setMachines] = useState<MachineModel[]>(() => loadCachedData<MachineModel[]>(CACHE_KEY_MACHINES, []) || []);
+  const [banks, setBanks] = useState<Bank[]>(() => loadCachedData<Bank[]>(CACHE_KEY_BANKS, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<MachineModel[]>(CACHE_KEY_MACHINES)?.length));
+  const machinesRef = useRef(machines);
+  useEffect(() => { machinesRef.current = machines; }, [machines]);
+
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -102,16 +108,21 @@ const MachinesManager: React.FC = () => {
   const flags = getCustomCardFlags();
 
   const fetchData = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    if (!isSilent && machinesRef.current.length === 0) {
       setLoading(true);
     }
-    try {
-      const [machRes, bankRes] = await Promise.all([
-        supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
-        supabase.from('banks').select('*').order('name', { ascending: true })
-      ]);
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
 
-      if (machRes.data) {
+    try {
+      const [machRes, bankRes] = await withQueryTimeout(
+        Promise.all([
+          supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
+          supabase.from('banks').select('*').order('name', { ascending: true })
+        ]),
+        6000
+      );
+
+      if (machRes?.data) {
         const mapped = machRes.data.map((m: any) => ({
           ...m,
           bank_name: m.banks?.name || 'Banco Geral',
@@ -119,13 +130,16 @@ const MachinesManager: React.FC = () => {
           card_rates: m.installment_fees?.rates_by_flag || (m.installment_fees ? m.installment_fees : DEFAULT_MACHINE_MDR_RATES)
         }));
         setMachines(mapped);
+        saveCachedData(CACHE_KEY_MACHINES, mapped);
       }
-      if (bankRes.data) {
+      if (bankRes?.data) {
         setBanks(bankRes.data);
+        saveCachedData(CACHE_KEY_BANKS, bankRes.data);
       }
     } catch (err: any) {
       console.error('Erro ao buscar maquininhas:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, []);

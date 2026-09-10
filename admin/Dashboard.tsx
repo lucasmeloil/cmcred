@@ -28,6 +28,10 @@ import { calculateLoanFinancials } from '../lib/rates';
 import { useAuth } from './AuthContext';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_DASH_STATS = 'cmcred_cache_dashboard_stats';
+const CACHE_KEY_DASH_LOANS = 'cmcred_cache_dashboard_loans';
 
 const StatCard: React.FC<{
   icon: React.ReactNode; label: string; value: string | number;
@@ -137,9 +141,11 @@ const Dashboard: React.FC = () => {
                   currentUser?.perfil === 'admin';
   const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
 
-  const [stats, setStats] = useState(DEFAULT_DASHBOARD_STATS);
-  const [recentLoans, setRecentLoans] = useState<any[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [stats, setStats] = useState(() => loadCachedData(CACHE_KEY_DASH_STATS, DEFAULT_DASHBOARD_STATS) || DEFAULT_DASHBOARD_STATS);
+  const [recentLoans, setRecentLoans] = useState<any[]>(() => loadCachedData<any[]>(CACHE_KEY_DASH_LOANS, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<any[]>(CACHE_KEY_DASH_LOANS)?.length));
+  const recentLoansRef = useRef(recentLoans);
+  useEffect(() => { recentLoansRef.current = recentLoans; }, [recentLoans]);
   const [activeTab, setActiveTab] = useState<'vendas' | 'operacoes'>('vendas');
 
   const myOperations = useMemo(() => {
@@ -153,9 +159,11 @@ const Dashboard: React.FC = () => {
   }, [recentLoans, currentUser]);
 
   const fetchData = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    if (!isSilent && recentLoansRef.current.length === 0) {
       setLoading(true);
     }
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
+
     try {
       // Carrega operações respeitando o escopo de dados: Admin vê geral, Consultor vê apenas as suas
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
@@ -164,15 +172,18 @@ const Dashboard: React.FC = () => {
         loansQuery = loansQuery.eq('consultant_id', currentUser.id);
       }
 
-      const [loansRes, leadsRes, customersRes, financeRes] = await Promise.all([
-        loansQuery,
-        supabase.from('leads').select('count', { count: 'exact' }),
-        supabase.from('customers').select('count', { count: 'exact' }),
-        supabase.from('finance').select('*')
-      ]);
+      const [loansRes, leadsRes, customersRes, financeRes] = await withQueryTimeout(
+        Promise.all([
+          loansQuery,
+          supabase.from('leads').select('count', { count: 'exact' }),
+          supabase.from('customers').select('count', { count: 'exact' }),
+          supabase.from('finance').select('*')
+        ]),
+        7000
+      );
 
-      let loans = loansRes.data || [];
-      let finance = financeRes.data || [];
+      let loans = loansRes?.data || [];
+      let finance = financeRes?.data || [];
 
       // Escopo estrito para consultor
       if (!isAdmin && currentUser?.id) {
@@ -364,9 +375,12 @@ const Dashboard: React.FC = () => {
         monthlyStats: last12Months
       };
       setStats(computedStats);
+      saveCachedData(CACHE_KEY_DASH_STATS, computedStats);
+      saveCachedData(CACHE_KEY_DASH_LOANS, mappedRecent);
     } catch (error) {
       console.error('Erro ao processar dados estratégicos:', error);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [isAdmin, currentUser?.id, currentUser?.nome, currentUser?.full_name]);
@@ -675,7 +689,7 @@ const Dashboard: React.FC = () => {
 
         {/* 12-Month Bar Chart */}
         <div style={{ height: '360px', minWidth: 0 }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 360 }}>
             <BarChart data={stats.monthlyStats || []} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 11, fontWeight: 800 }} />
@@ -711,7 +725,7 @@ const Dashboard: React.FC = () => {
             </h3>
           </div>
           <div style={{ height: '320px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 320 }}>
               <AreaChart data={stats.evolutionStats} margin={{ left: 10, right: 10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorVolume" x1="0" y1="0" x2="0" y2="1">
@@ -747,7 +761,7 @@ const Dashboard: React.FC = () => {
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Liquidez: Preferência de Termos (Parcelas)</h3>
           </div>
           <div style={{ height: '320px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 320 }}>
               <BarChart data={stats.installmentStats} margin={{ bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 800}} />
@@ -778,7 +792,7 @@ const Dashboard: React.FC = () => {
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Performance Financeira por Maquininha</h3>
           </div>
           <div style={{ height: '300px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 300 }}>
               <BarChart data={stats.machineStats} layout="vertical" margin={{ left: 10, right: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                 <XAxis type="number" hide />
@@ -805,7 +819,7 @@ const Dashboard: React.FC = () => {
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Destino da Liquidez por Instituição Bancária</h3>
           </div>
           <div style={{ height: '300px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 300 }}>
               <PieChart>
                 <Pie
                   data={stats.bankStats}

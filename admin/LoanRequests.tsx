@@ -12,6 +12,11 @@ import type { LoanRequest, LoanStatus, LoanType, Bank, Machine } from './types';
 import { calculateLoanFinancials } from '../lib/rates';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_LOANS = 'cmcred_cache_loan_requests';
+const CACHE_KEY_LOAN_BANKS = 'cmcred_cache_loan_banks';
+const CACHE_KEY_LOAN_MACHINES = 'cmcred_cache_loan_machines';
 
 const statusConfig: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
   'in analysis': { color: '#b45309', bg: '#fef3c7', icon: <Clock size={14} />, label: 'Em Análise' },
@@ -49,10 +54,13 @@ const LoanRequests: React.FC = () => {
                   email === 'lucas@teste.com.br' || 
                   currentUser?.perfil === 'admin';
 
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [banks, setBanks] = useState<Bank[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loans, setLoans] = useState<LoanRequest[]>(() => loadCachedData<LoanRequest[]>(CACHE_KEY_LOANS, []) || []);
+  const [banks, setBanks] = useState<Bank[]>(() => loadCachedData<Bank[]>(CACHE_KEY_LOAN_BANKS, []) || []);
+  const [machines, setMachines] = useState<Machine[]>(() => loadCachedData<Machine[]>(CACHE_KEY_LOAN_MACHINES, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<LoanRequest[]>(CACHE_KEY_LOANS)?.length));
+  const loansRef = React.useRef(loans);
+  useEffect(() => { loansRef.current = loans; }, [loans]);
+
   const [editingMessage, setEditingMessage] = useState('');
 
   const defaultMessages = [
@@ -70,9 +78,10 @@ const LoanRequests: React.FC = () => {
   const [selected, setSelected] = useState<LoanRequest | null>(null);
 
   const fetchInitialData = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    if (!isSilent && loansRef.current.length === 0) {
       setLoading(true);
     }
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
     try {
       // 1. Carrega operações respeitando o escopo: Admin vê tudo, Consultor vê apenas as suas
       let loansQuery = supabase
@@ -84,15 +93,18 @@ const LoanRequests: React.FC = () => {
         loansQuery = loansQuery.eq('consultant_id', currentUser.id);
       }
 
-      const [loansRes, banksRes, machinesRes] = await Promise.all([
-        loansQuery,
-        supabase.from('banks').select('*').order('name'),
-        supabase.from('machines').select('*').order('name')
-      ]);
+      const [loansRes, banksRes, machinesRes] = await withQueryTimeout(
+        Promise.all([
+          loansQuery,
+          supabase.from('banks').select('*').order('name'),
+          supabase.from('machines').select('*').order('name')
+        ]),
+        7000
+      );
 
-      if (loansRes.error) {
+      if (loansRes?.error) {
         console.error('Erro ao consultar empréstimos:', loansRes.error);
-      } else if (loansRes.data) {
+      } else if (loansRes?.data) {
         let rawLoans = loansRes.data;
         if (!isAdmin && currentUser?.id) {
           rawLoans = rawLoans.filter((l: any) => l.consultant_id === currentUser.id);
@@ -106,19 +118,23 @@ const LoanRequests: React.FC = () => {
           consultant_name: l.profiles?.full_name || 'Operação Direta / Admin'
         }));
         setLoans(mapped);
+        saveCachedData(CACHE_KEY_LOANS, mapped);
       }
 
-      if (banksRes.data) {
+      if (banksRes?.data) {
         setBanks(banksRes.data);
+        saveCachedData(CACHE_KEY_LOAN_BANKS, banksRes.data);
       }
 
-      if (machinesRes.data) {
+      if (machinesRes?.data) {
         setMachines(machinesRes.data);
+        saveCachedData(CACHE_KEY_LOAN_MACHINES, machinesRes.data);
       }
     } catch (err: any) {
       console.error('Erro ao buscar empréstimos:', err);
       addNotification('Erro ao sincronizar empréstimos: ' + (err?.message || 'Erro de rede'), 'alerta');
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [isAdmin, currentUser?.id, addNotification]);

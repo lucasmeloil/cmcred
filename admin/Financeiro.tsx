@@ -36,6 +36,10 @@ import { calculateLoanFinancials } from '../lib/rates';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_FINANCE = 'cmcred_cache_finance_data';
+const CACHE_KEY_FINANCE_LOANS = 'cmcred_cache_finance_loans';
 
 const Financeiro: React.FC = () => {
   const { addNotification, logAudit, currentUser, authUserEmail } = useAuth();
@@ -46,9 +50,11 @@ const Financeiro: React.FC = () => {
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 
-  const [data, setData] = useState<FinanceEntry[]>([]);
-  const [loans, setLoans] = useState<LoanRequest[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [data, setData] = useState<FinanceEntry[]>(() => loadCachedData<FinanceEntry[]>(CACHE_KEY_FINANCE, []) || []);
+  const [loans, setLoans] = useState<LoanRequest[]>(() => loadCachedData<LoanRequest[]>(CACHE_KEY_FINANCE_LOANS, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<FinanceEntry[]>(CACHE_KEY_FINANCE)?.length));
+  const dataRef = React.useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
   const [syncing, setSyncing] = useState(false);
   
   // Modais de cadastro manual
@@ -78,11 +84,13 @@ const Financeiro: React.FC = () => {
 
   // Buscar dados integrados do Supabase
   const fetchData = useCallback(async (isSilent = false) => {
+    // Se já há dados em tela, não bloqueia a visão
+    if (!isSilent && dataRef.current.length === 0) {
+      setLoading(true);
+    }
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
+
     try {
-      if (!isSilent) {
-        setLoading(true);
-      }
-      
       let financeQuery = supabase.from('finance').select('*').order('due_date', { ascending: false });
       let loansQuery = supabase.from('loans').select('*, leads(name), customers(name), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days)').order('created_at', { ascending: false });
 
@@ -108,12 +116,16 @@ const Financeiro: React.FC = () => {
         loansQuery = loansQuery.gte('created_at', customRange.start).lte('created_at', customRange.end);
       }
 
-      const [financeRes, loansRes] = await Promise.all([financeQuery, loansQuery]);
+      const [financeRes, loansRes] = await withQueryTimeout(
+        Promise.all([financeQuery, loansQuery]),
+        7000
+      );
 
-      if (financeRes.data) {
+      if (financeRes?.data) {
         setData(financeRes.data);
+        saveCachedData(CACHE_KEY_FINANCE, financeRes.data);
       }
-      if (loansRes.data) {
+      if (loansRes?.data) {
         const mappedLoans = loansRes.data.map((l: any) => ({
           ...l,
           lead_name: l.leads?.name || l.customers?.name || 'Cliente Identificado',
@@ -121,10 +133,12 @@ const Financeiro: React.FC = () => {
           machine_name: l.machines?.name
         }));
         setLoans(mappedLoans);
+        saveCachedData(CACHE_KEY_FINANCE_LOANS, mappedLoans);
       }
     } catch (err: any) {
       console.error('Erro ao buscar dados financeiros:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [dateRange, customRange]);

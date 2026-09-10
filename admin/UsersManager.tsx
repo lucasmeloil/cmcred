@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { 
@@ -13,6 +13,9 @@ import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { isSuperAdminEmail } from '../lib/security';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_USERS = 'cmcred_cache_users_list';
 
 const roleConfig: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
   admin:      { color: '#d97706', bg: '#fffbeb', label: 'Administrador (Super Admin)', icon: <Shield size={14} /> },
@@ -64,10 +67,13 @@ const UsersManager: React.FC = () => {
 
   const isConsultantUser = currentUser?.perfil === 'consultant' && !isSuperAdmin;
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>(() => loadCachedData<AdminUser[]>(CACHE_KEY_USERS, []) || []);
+  const usersRef = useRef(users);
+  useEffect(() => { usersRef.current = users; }, [users]);
+
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<AdminUser[]>(CACHE_KEY_USERS)?.length));
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editPassword, setEditPassword] = useState('');
   const [activeTab, setActiveTab] = useState('all');
@@ -147,11 +153,16 @@ const UsersManager: React.FC = () => {
   };
 
   const fetchUsers = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    if (!isSilent && usersRef.current.length === 0) {
       setLoading(true);
     }
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
+
     try {
-      let { data, error } = await supabase.from('profiles').select('*').order('full_name');
+      let { data, error } = await withQueryTimeout(
+        supabase.from('profiles').select('*').order('full_name'),
+        6000
+      );
       
       let mappedUsers: AdminUser[] = [];
       if (data && data.length > 0) {
@@ -205,9 +216,11 @@ const UsersManager: React.FC = () => {
       }
 
       setUsers(mappedUsers);
+      saveCachedData(CACHE_KEY_USERS, mappedUsers);
     } catch (err: any) {
       console.error('Erro ao buscar usuários:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, []);

@@ -10,11 +10,19 @@ import type { Customer } from './types';
 import { validatePixKey, PixValidationResult } from '../lib/pixValidator';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_PEOPLE = 'cmcred_cache_customers';
 
 const PeopleManager: React.FC = () => {
   const { addNotification, logAudit, showConfirm, isSuperAdmin, canDeleteRecords } = useAuth();
-  const [people, setPeople] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [people, setPeople] = useState<Customer[]>(() => loadCachedData<Customer[]>(CACHE_KEY_PEOPLE, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<Customer[]>(CACHE_KEY_PEOPLE)?.length));
+  const peopleRef = useRef<Customer[]>(people);
+  useEffect(() => {
+    peopleRef.current = people;
+  }, [people]);
+
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
@@ -57,23 +65,33 @@ const PeopleManager: React.FC = () => {
   const [formData, setFormData] = useState<Partial<Customer>>(initialPerson);
 
   const fetchPeople = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    // Se já temos registros em tela, nunca trava com tela de loading
+    if (!isSilent && peopleRef.current.length === 0) {
       setLoading(true);
     }
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+
     try {
-      const { data, error } = await supabase
-        .from('customers')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const { data, error } = await withQueryTimeout(
+        supabase
+          .from('customers')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        6000
+      );
 
       if (error) {
         console.error('Erro ao buscar clientes:', error);
       } else if (data) {
         setPeople(data);
+        saveCachedData(CACHE_KEY_PEOPLE, data);
       }
     } catch (err) {
       console.error('Erro ao buscar pessoas:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, []);

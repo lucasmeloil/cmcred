@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { jsPDF } from 'jspdf';
@@ -25,6 +25,11 @@ import { calculateLoanFinancials, groupLoansByMachine, MachineSettlementSummary 
 import { MachineSettlementAlertBanner } from './MachineSettlementAlertBanner';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
+import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCache';
+
+const CACHE_KEY_REPORTS_LOANS = 'cmcred_cache_reports_loans';
+const CACHE_KEY_REPORTS_FINANCE = 'cmcred_cache_reports_finance';
+const CACHE_KEY_REPORTS_MACHINES = 'cmcred_cache_reports_machines';
 
 interface LoanReportRow {
   id: string;
@@ -66,11 +71,13 @@ const ReportsManager: React.FC = () => {
                   currentUser?.perfil === 'admin';
   
   // Data State
-  const [loans, setLoans] = useState<any[]>([]);
-  const [finance, setFinance] = useState<any[]>([]);
+  const [loans, setLoans] = useState<any[]>(() => loadCachedData<any[]>(CACHE_KEY_REPORTS_LOANS, []) || []);
+  const [finance, setFinance] = useState<any[]>(() => loadCachedData<any[]>(CACHE_KEY_REPORTS_FINANCE, []) || []);
   const [consultants, setConsultants] = useState<any[]>([]);
-  const [machines, setMachines] = useState<{ id: string; name: string }[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [machines, setMachines] = useState<{ id: string; name: string }[]>(() => loadCachedData<any[]>(CACHE_KEY_REPORTS_MACHINES, []) || []);
+  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<any[]>(CACHE_KEY_REPORTS_LOANS)?.length));
+  const loansRef = useRef(loans);
+  useEffect(() => { loansRef.current = loans; }, [loans]);
 
   // Filters State
   const [period, setPeriod] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('month');
@@ -83,41 +90,50 @@ const ReportsManager: React.FC = () => {
 
   // Fetch initial data
   const fetchData = useCallback(async (isSilent = false) => {
-    if (!isSilent) {
+    if (!isSilent && loansRef.current.length === 0) {
       setLoading(true);
     }
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
+
     try {
       let loansQuery = supabase.from('loans').select('*, leads(name, cpf), customers(name, cpf), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)').order('created_at', { ascending: false });
       if (!isAdmin && currentUser?.id) {
         loansQuery = loansQuery.eq('consultant_id', currentUser.id);
       }
 
-      const [loansRes, financeRes, profilesRes, machinesRes] = await Promise.all([
-        loansQuery,
-        supabase.from('finance').select('*').order('due_date', { ascending: false }),
-        supabase.from('profiles').select('id, full_name, role'),
-        supabase.from('machines').select('id, name').order('name')
-      ]);
+      const [loansRes, financeRes, profilesRes, machinesRes] = await withQueryTimeout(
+        Promise.all([
+          loansQuery,
+          supabase.from('finance').select('*').order('due_date', { ascending: false }),
+          supabase.from('profiles').select('id, full_name, role'),
+          supabase.from('machines').select('id, name').order('name')
+        ]),
+        7000
+      );
 
-      if (loansRes.data) {
+      if (loansRes?.data) {
         let fetchedLoans = loansRes.data;
         if (!isAdmin && currentUser?.id) {
           fetchedLoans = fetchedLoans.filter((l: any) => l.consultant_id === currentUser.id);
         }
         setLoans(fetchedLoans);
+        saveCachedData(CACHE_KEY_REPORTS_LOANS, fetchedLoans);
       }
-      if (financeRes.data) {
+      if (financeRes?.data) {
         setFinance(financeRes.data);
+        saveCachedData(CACHE_KEY_REPORTS_FINANCE, financeRes.data);
       }
-      if (profilesRes.data) {
-        setConsultants(profilesRes.data.filter(p => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
+      if (profilesRes?.data) {
+        setConsultants(profilesRes.data.filter((p: any) => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
       }
-      if (machinesRes.data) {
+      if (machinesRes?.data) {
         setMachines(machinesRes.data);
+        saveCachedData(CACHE_KEY_REPORTS_MACHINES, machinesRes.data);
       }
     } catch (err: any) {
       console.error('Erro ao buscar dados do relatório:', err);
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }, [isAdmin, currentUser?.id]);

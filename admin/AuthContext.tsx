@@ -307,6 +307,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
+    // Verificação periódica de validade do token (a cada 4 minutos) e renovação silenciosa
+    const tokenRefreshInterval = setInterval(async () => {
+      if (!isMounted) return;
+      try {
+        const { data: { session: curSess } } = await supabase.auth.getSession();
+        if (curSess?.expires_at) {
+          const nowSec = Math.floor(Date.now() / 1000);
+          const timeUntilExpiry = curSess.expires_at - nowSec;
+          // Se expira em menos de 10 minutos (600s), renova silenciosamente
+          if (timeUntilExpiry < 600) {
+            const { data: refreshed } = await supabase.auth.refreshSession();
+            if (refreshed?.session) {
+              setSession(refreshed.session);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Verificação silenciosa de token:', err);
+      }
+    }, 240000);
+
     // Revalidação suave de sessão ao retornar para a aba (visibilitychange e focus)
     const handleVisibilityChange = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && isMounted) {
@@ -331,6 +352,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       isMounted = false;
       clearTimeout(safetyTimer);
+      clearInterval(tokenRefreshInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleVisibilityChange);
       subscription.unsubscribe();
