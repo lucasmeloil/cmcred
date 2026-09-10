@@ -52,7 +52,7 @@ class ConnectionManager {
   }
 
   private setupEventListeners(): void {
-    // 1. Mudança de visibilidade da aba (apenas log de auditoria passivo)
+    // 1. Mudança de visibilidade da aba: reconecta e valida sessão ao retornar
     document.addEventListener('visibilitychange', () => {
       const isVisible = document.visibilityState === 'visible';
       this.isVisibleState = isVisible;
@@ -61,12 +61,14 @@ class ConnectionManager {
         this.logEvent('tab_hidden', 'Aba minimizada ou usuário alternou de aba');
       } else {
         this.logEvent('tab_visible', 'Usuário retornou à aba CM CRED');
+        this.handleWakeUp(true);
       }
     });
 
-    // 2. Foco na janela (passivo)
+    // 2. Foco na janela: reconexão passiva com debounce
     window.addEventListener('focus', () => {
       this.isVisibleState = true;
+      this.handleWakeUp(true);
     });
 
     // 3. Status de rede online/offline
@@ -102,11 +104,11 @@ class ConnectionManager {
       this.isReconnectingState = true;
 
       try {
-        // 1. Garantir que a sessão do Supabase está válida antes de fazer qualquer query
-        const sessionStatus = await this.ensureFreshSession(true);
-
-        // 2. Garantir que o socket Realtime do Supabase está conectado
+        // 1. Garantir que o socket Realtime do Supabase está conectado
         await this.ensureRealtimeSocket();
+
+        // 2. Garantir que a sessão do Supabase está válida antes de fazer qualquer query
+        await this.ensureFreshSession(true);
 
         // 3. Disparar sincronização suave para todos os ouvintes registrados
         this.lastSyncTime = Date.now();
@@ -121,7 +123,7 @@ class ConnectionManager {
       } finally {
         this.isReconnectingState = false;
       }
-    }, 400); // 400ms de amortecimento para o navegador estabilizar o socket
+    }, 300); // 300ms de amortecimento para o navegador estabilizar o socket
   }
 
   /**
@@ -134,7 +136,11 @@ class ConnectionManager {
 
     this.isRefreshingToken = true;
     try {
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const getSessionPromise = supabase.auth.getSession();
+      const timeoutPromise = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null }, error: new Error('Timeout getSession') }), 2500)
+      );
+      const { data: { session }, error } = await Promise.race([getSessionPromise, timeoutPromise]);
 
       if (error || !session) {
         // Não apaga dados locais se houver falha de rede temporária
@@ -145,10 +151,14 @@ class ConnectionManager {
       const expiresAt = session.expires_at || 0;
       const timeLeftSec = expiresAt - nowSec;
 
-      // Renova apenas se o token já expirou ou expira em menos de 30 segundos
-      if (expiresAt > 0 && timeLeftSec <= 30) {
+      // Renova apenas se o token já expirou ou expira em menos de 60 segundos
+      if (expiresAt > 0 && timeLeftSec <= 60) {
         this.logEvent('token_refresh_attempt', `Token expirando (${timeLeftSec}s). Renovando preventivamente...`);
-        const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+        const refreshPromise = supabase.auth.refreshSession();
+        const refreshTimeout = new Promise<any>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, error: new Error('Timeout refresh') }), 3000)
+        );
+        const { data: refreshed, error: refreshErr } = await Promise.race([refreshPromise, refreshTimeout]);
 
         if (refreshErr) {
           this.logEvent('token_refresh_failed', refreshErr.message);

@@ -207,12 +207,6 @@ const CreateLoan: React.FC = () => {
     }
   };
 
-  useRealtimeSync({
-    tables: ['customers', 'machines', 'simulator_rates'],
-    onDataChange: fetchData,
-    heartbeatIntervalMs: 45000,
-  });
-
   useEffect(() => {
     fetchData();
 
@@ -431,17 +425,32 @@ const CreateLoan: React.FC = () => {
       };
 
       let insertedLoans: any = null;
-      let { data, error: loanError } = await supabase.from('loans').insert([insertLoan]).select();
-      insertedLoans = data;
+      let loanError: any = null;
+
+      try {
+        const queryPromise = supabase.from('loans').insert([insertLoan]).select();
+        const timeoutPromise = new Promise<any>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout de inserção em loans')), 5000)
+        );
+        const res: any = await Promise.race([queryPromise, timeoutPromise]);
+        insertedLoans = res.data;
+        loanError = res.error;
+      } catch (err: any) {
+        loanError = err;
+      }
 
       if (loanError && supabaseAdmin) {
         console.warn('Fallback com supabaseAdmin no insert de loans:', loanError.message);
-        const adminRes = await supabaseAdmin.from('loans').insert([insertLoan]).select();
-        if (!adminRes.error && adminRes.data) {
-          insertedLoans = adminRes.data;
-          loanError = null;
-        } else if (adminRes.error) {
-          loanError = adminRes.error;
+        try {
+          const adminRes = await supabaseAdmin.from('loans').insert([insertLoan]).select();
+          if (!adminRes.error && adminRes.data) {
+            insertedLoans = adminRes.data;
+            loanError = null;
+          } else if (adminRes.error) {
+            loanError = adminRes.error;
+          }
+        } catch (adminErr) {
+          console.error('Falha no fallback supabaseAdmin loans:', adminErr);
         }
       }
 
@@ -475,11 +484,24 @@ const CreateLoan: React.FC = () => {
         }
       ];
 
-      let { error: finError } = await supabase.from('finance').insert(financeEntries);
+      let finError: any = null;
+      try {
+        const finQueryPromise = supabase.from('finance').insert(financeEntries);
+        const finTimeoutPromise = new Promise<any>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout de inserção em finance')), 5000)
+        );
+        const finRes: any = await Promise.race([finQueryPromise, finTimeoutPromise]);
+        finError = finRes?.error;
+      } catch (err) {
+        finError = err;
+      }
+
       if (finError && supabaseAdmin) {
         console.warn('Fallback com supabaseAdmin no insert de finance:', finError.message);
-        const adminFinRes = await supabaseAdmin.from('finance').insert(financeEntries);
-        finError = adminFinRes.error;
+        try {
+          const adminFinRes = await supabaseAdmin.from('finance').insert(financeEntries);
+          finError = adminFinRes.error;
+        } catch {}
       }
       if (finError) console.warn('Aviso financeiro:', finError.message);
 

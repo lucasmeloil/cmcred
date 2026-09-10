@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { connectionManager } from './connectionManager';
 
 export interface UseRealtimeSyncOptions {
   table?: string;
@@ -127,7 +128,12 @@ export function useRealtimeSync({
     };
     window.addEventListener('cmcred:live-data-change', handleLiveDataChange);
 
-    // 3. Heartbeat suave de segurança a cada 60s (apenas se visível e online)
+    // 3. Integração com o ConnectionManager para acordar canais suavemente
+    const unsubscribeConn = connectionManager.subscribeToReconnect(() => {
+      triggerRefresh(true);
+    });
+
+    // 4. Heartbeat suave de segurança a cada 60s (apenas se visível e online)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
         triggerRefresh(true);
@@ -139,6 +145,7 @@ export function useRealtimeSync({
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('cmcred:live-data-change', handleLiveDataChange);
+      unsubscribeConn();
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

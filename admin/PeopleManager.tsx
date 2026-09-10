@@ -274,18 +274,29 @@ const PeopleManager: React.FC = () => {
     };
 
     if (editingId) {
-      let { error } = await supabase
-        .from('customers')
-        .update(payload)
-        .eq('id', editingId);
+      let error: any = null;
+      try {
+        const queryPromise = supabase.from('customers').update(payload).eq('id', editingId);
+        const timeoutPromise = new Promise<any>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout na atualização do cliente')), 5000)
+        );
+        const res: any = await Promise.race([queryPromise, timeoutPromise]);
+        error = res?.error;
+      } catch (err) {
+        error = err;
+      }
 
       if (error && supabaseAdmin) {
         console.warn('Fallback com supabaseAdmin no update de cliente:', error.message);
-        const adminRes = await supabaseAdmin
-          .from('customers')
-          .update(payload)
-          .eq('id', editingId);
-        error = adminRes.error;
+        try {
+          const adminRes = await supabaseAdmin
+            .from('customers')
+            .update(payload)
+            .eq('id', editingId);
+          error = adminRes.error;
+        } catch (adminErr) {
+          console.error('Falha no fallback supabaseAdmin update cliente:', adminErr);
+        }
       }
         
       if (!error) {
@@ -294,20 +305,34 @@ const PeopleManager: React.FC = () => {
         fetchPeople();
         handleClose();
       } else {
-        const msg = error.message.includes('unique constraint') || error.message.includes('customers_cpf_key')
+        const msg = error.message?.includes('unique constraint') || error.message?.includes('customers_cpf_key')
           ? 'Este CPF já está cadastrado em outro cliente.'
-          : error.message;
+          : (error.message || 'Erro desconhecido');
         addNotification('Erro ao atualizar: ' + msg, 'alerta');
       }
     } else {
-      let { error } = await supabase.from('customers').insert([payload]);
+      let error: any = null;
+      try {
+        const queryPromise = supabase.from('customers').insert([payload]);
+        const timeoutPromise = new Promise<any>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout no cadastro do cliente')), 5000)
+        );
+        const res: any = await Promise.race([queryPromise, timeoutPromise]);
+        error = res?.error;
+      } catch (err) {
+        error = err;
+      }
 
       if (error && supabaseAdmin) {
         console.warn('Fallback com supabaseAdmin no cadastro de cliente:', error.message);
-        const adminRes = await supabaseAdmin
-          .from('customers')
-          .insert([payload]);
-        error = adminRes.error;
+        try {
+          const adminRes = await supabaseAdmin
+            .from('customers')
+            .insert([payload]);
+          error = adminRes.error;
+        } catch (adminErr) {
+          console.error('Falha no fallback supabaseAdmin cadastro cliente:', adminErr);
+        }
       }
 
       if (!error) {

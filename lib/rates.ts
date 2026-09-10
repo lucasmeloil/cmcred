@@ -1283,6 +1283,17 @@ let memoryCustomTables: NovaTabelaTaxasResultado[] = (() => {
 })();
 
 export function getMemoryCustomTables(): NovaTabelaTaxasResultado[] {
+  if (memoryCustomTables.length === 0 && typeof window !== 'undefined') {
+    try {
+      const raw = window.localStorage.getItem(CACHE_CUSTOM_TABLES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          memoryCustomTables = parsed;
+        }
+      }
+    } catch {}
+  }
   return memoryCustomTables;
 }
 
@@ -1300,17 +1311,27 @@ export async function getAllTableOptions(): Promise<Array<{ id: string; name: st
 
 export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasResultado[]> {
   try {
-    let { data, error } = await supabase
+    const fetchPromise = supabase
       .from('custom_rate_tables')
       .select('*')
       .order('created_at', { ascending: true });
 
+    const timeoutPromise = new Promise<any>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: new Error('Timeout consultando custom_rate_tables') }), 3500)
+    );
+
+    let { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
+
     if ((error || !data || data.length === 0) && supabaseAdmin) {
       try {
-        const adminRes = await supabaseAdmin
+        const adminPromise = supabaseAdmin
           .from('custom_rate_tables')
           .select('*')
           .order('created_at', { ascending: true });
+        const adminRes = await Promise.race([
+          adminPromise,
+          new Promise<any>((r) => setTimeout(() => r({ data: null, error: new Error('Timeout') }), 3500))
+        ]);
         if (adminRes.data && adminRes.data.length > 0) {
           data = adminRes.data;
           error = null;
@@ -1322,32 +1343,40 @@ export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasRe
 
     if (error) {
       console.warn('Aviso ao consultar custom_rate_tables no banco:', error.message);
-      return memoryCustomTables;
+      return getMemoryCustomTables();
     }
 
     if (data && Array.isArray(data)) {
-      const mapped = data.map((row: any) => ({
-        id: row.id,
-        nomeTabela: row.nome_tabela || row.nomeTabela || 'Tabela Sem Nome',
-        tipoTabela: row.tipo_tabela || row.tipoTabela || 'Flex',
-        faixaTaxas: row.faixa_taxas || row.faixaTaxas || { min: 0, max: 100 },
-        bandeiras: Array.isArray(row.bandeiras) ? row.bandeiras : ['VISA', 'MASTER'],
-        taxasPorParcelas: row.taxas_por_parcelas || row.taxasPorParcelas || {},
-        dataCriacao: Number(row.data_criacao || row.dataCriacao || Date.now()),
-        dataCriacaoFormatada: row.data_criacao_formatada || row.dataCriacaoFormatada || new Date().toLocaleString('pt-BR')
-      }));
-      memoryCustomTables = mapped;
-      try {
-        if (typeof window !== 'undefined' && mapped.length > 0) {
-          window.localStorage.setItem(CACHE_CUSTOM_TABLES_KEY, JSON.stringify(mapped));
-        }
-      } catch {}
-      return mapped;
+      // PROTEÇÃO CRÍTICA: Se a resposta veio vazia por causa de transição momentânea de auth,
+      // NUNCA apaga as tabelas que já temos em memória ou cache!
+      if (data.length === 0 && memoryCustomTables.length > 0) {
+        return memoryCustomTables;
+      }
+
+      if (data.length > 0) {
+        const mapped = data.map((row: any) => ({
+          id: row.id,
+          nomeTabela: row.nome_tabela || row.nomeTabela || 'Tabela Sem Nome',
+          tipoTabela: row.tipo_tabela || row.tipoTabela || 'Flex',
+          faixaTaxas: row.faixa_taxas || row.faixaTaxas || { min: 0, max: 100 },
+          bandeiras: Array.isArray(row.bandeiras) ? row.bandeiras : ['VISA', 'MASTER'],
+          taxasPorParcelas: row.taxas_por_parcelas || row.taxasPorParcelas || {},
+          dataCriacao: Number(row.data_criacao || row.dataCriacao || Date.now()),
+          dataCriacaoFormatada: row.data_criacao_formatada || row.dataCriacaoFormatada || new Date().toLocaleString('pt-BR')
+        }));
+        memoryCustomTables = mapped;
+        try {
+          if (typeof window !== 'undefined' && mapped.length > 0) {
+            window.localStorage.setItem(CACHE_CUSTOM_TABLES_KEY, JSON.stringify(mapped));
+          }
+        } catch {}
+        return mapped;
+      }
     }
   } catch (err) {
     console.error('Erro ao consultar custom_rate_tables no Supabase:', err);
   }
-  return memoryCustomTables;
+  return getMemoryCustomTables();
 }
 
 export async function saveCustomTableToDatabase(table: NovaTabelaTaxasResultado): Promise<{ success: boolean; error?: string }> {

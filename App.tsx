@@ -11,6 +11,7 @@ import Footer from './components/Footer';
 import WhatsAppFloating from './components/WhatsAppFloating';
 import BottomNav from './components/BottomNav';
 import AdminPanel from './admin/AdminPanel';
+import './lib/connectionManager';
 
 const App: React.FC = () => {
   const [currentPath, setCurrentPath] = React.useState(

@@ -103,11 +103,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Evita múltiplas chamadas concorrentes idênticas
     if (inFlightProfileRef.current === userId) return;
 
-    // Throttle inteligente: se já buscou este mesmo perfil há menos de 3 segundos, não re-busca
+    // Throttle inteligente: se já buscou este mesmo perfil há menos de 10 segundos e usuário está ativo, não re-busca
     const now = Date.now();
     if (
       currentUserRef.current?.id === userId && 
-      now - lastProfileFetchTimeRef.current < 3000
+      currentUserRef.current?.email &&
+      now - lastProfileFetchTimeRef.current < 10000
     ) {
       return;
     }
@@ -122,11 +123,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fallbackEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
         isSuperAdminEmail(fallbackEmail);
 
-      const { data, error } = await supabase
+      // Consulta com timeout de 3500ms para NUNCA travar a aplicação em transições de aba/rede
+      const fetchPromise = supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
+
+      const timeoutPromise = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ data: null, error: new Error('Timeout profile fetch') }), 3500)
+      );
+
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
 
       const email = data?.email || fallbackEmail || (currentUserRef.current?.email) || '';
       const isSuperAdmin = isSuperAdminFallback ||
@@ -248,12 +256,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 600);
 
     // Check active session
-    supabase.auth.getSession().then(async ({ data: { session: initialSession } }) => {
+    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
       if (!isMounted) return;
       setSession(initialSession);
       activeSessionUserIdRef.current = initialSession?.user?.id || null;
       if (initialSession?.user?.id) {
-        await fetchProfile(initialSession.user.id, initialSession.user.email);
+        fetchProfile(initialSession.user.id, initialSession.user.email);
       }
       setIsLoading(false);
     }).catch(err => {
@@ -261,15 +269,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isMounted) setIsLoading(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+    // Listen for auth changes (Desacoplado da pilha síncrona do GoTrue para NUNCA gerar deadlock)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
       if (!isMounted) return;
 
       activeSessionUserIdRef.current = newSession?.user?.id || null;
       if (newSession?.user?.id) {
         setSession(newSession);
         try { localStorage.setItem(ACTIVE_SESSION_FLAG_KEY, 'true'); } catch {}
-        await fetchProfile(newSession.user.id, newSession.user.email);
+        // Execução desacoplada via setTimeout(..., 0) para liberar o lock do Supabase imediatamente
+        setTimeout(() => {
+          if (isMounted) {
+            fetchProfile(newSession.user.id, newSession.user.email);
+          }
+        }, 0);
       } else if (_event === 'SIGNED_OUT') {
         // ITEM 6: Garantir que o botão "Sair do Sistema" seja o ÚNICO gatilho de logout — NUNCA por inatividade ou troca de aba!
         if (isExplicitLogoutRef.current) {
@@ -288,6 +301,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false);
     });
 
+    // Monitor de visibilidade suave: ao voltar para a aba ou janela, garante sessão sem recarregar tela
+    const handleVisibility = async () => {
+      if (document.visibilityState === 'visible' && isMounted) {
+        try {
+          const { data } = await supabase.auth.getSession();
+          if (data?.session) {
+            setSession(data.session);
+          }
+        } catch {}
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+
     // Sincronização em tempo real de permissões e perfil (apenas para o usuário logado)
     const profileChannel = supabase
       .channel('realtime-auth-profile-sync')
@@ -305,7 +332,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (currentUserId) {
             supabase.auth.getSession().then(({ data }) => {
               if (data?.session?.user) {
-                fetchProfile(data.session.user.id, data.session.user.email);
+                setTimeout(() => {
+                  if (isMounted) fetchProfile(data.session.user.id, data.session.user.email);
+                }, 0);
               }
             });
           }
@@ -317,6 +346,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       isMounted = false;
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
       supabase.removeChannel(profileChannel);
     };
   }, [fetchProfile]);
