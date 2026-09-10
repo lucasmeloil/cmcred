@@ -143,19 +143,19 @@ export function useRealtimeSync({
             setupChannel();
           }
 
-          // Apenas busca dados se a aba ficou inativa por mais de 20 segundos
+          // Busca dados imediatamente ao retornar para a aba (cooldown mínimo de 3s)
           const timeSinceLast = Date.now() - lastRefreshTimeRef.current;
-          if (timeSinceLast > 20000) {
+          if (timeSinceLast > 3000) {
             triggerRefresh(true);
           }
         }
       }
     };
 
-    // 3. Quando a janela ganha foco (apenas revalida se passou mais de 25s)
+    // 3. Quando a janela ganha foco (revalida se passou mais de 5s)
     const handleFocus = () => {
       const timeSinceLast = Date.now() - lastRefreshTimeRef.current;
-      if (timeSinceLast > 25000) {
+      if (timeSinceLast > 5000) {
         triggerRefresh(true);
       }
     };

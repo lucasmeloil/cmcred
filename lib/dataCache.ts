@@ -1,52 +1,16 @@
 /**
- * Gerenciador de cache local seguro para o sistema CM CRED
- * Permite inicialização instantânea das telas (Cache-First)
- * e proteção contra perda de dados quando o usuário muda de aba ou fica inativo.
+ * dataCache.ts — CM CRED
+ *
+ * Versão limpa SEM localStorage. Dados vivem apenas em memória React.
+ * O Supabase Client cuida da sessão de autenticação de forma nativa.
+ * Qualquer busca de dados é feita diretamente do banco ao montar a página
+ * ou ao retornar para a aba (via useRealtimeSync / visibilitychange).
  */
 
-export function loadCachedData<T>(key: string, defaultVal: T | null = null): T | null {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return defaultVal;
-  }
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return defaultVal;
-    const parsed = JSON.parse(raw);
-    return parsed as T;
-  } catch (err) {
-    console.warn(`[dataCache] Falha ao ler chave "${key}":`, err);
-    return defaultVal;
-  }
-}
-
-export function saveCachedData<T>(key: string, data: T): void {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return;
-  }
-  try {
-    if (data === undefined || data === null) {
-      localStorage.removeItem(key);
-    } else {
-      localStorage.setItem(key, JSON.stringify(data));
-    }
-  } catch (err) {
-    console.warn(`[dataCache] Falha ao gravar chave "${key}":`, err);
-  }
-}
-
-export function clearCachedData(key: string): void {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return;
-  }
-  try {
-    localStorage.removeItem(key);
-  } catch {}
-}
-
 /**
- * Executa uma Promise com timeout de segurança longo (15s) e tratamento tolerante a falhas.
- * NUNCA lança erro não-tratado que quebre a interface ou gere toasts vermelhos de alerta;
- * caso atinja o timeout ou falhe, retorna fallbackValue seguro.
+ * Executa uma Promise com timeout de segurança tolerante a falhas.
+ * NUNCA lança erro não-tratado que quebre a interface ou gere toasts vermelhos;
+ * caso atinja o timeout ou falhe, retorna fallbackValue seguro silenciosamente.
  */
 export async function withQueryTimeout<T = any>(
   promise: PromiseLike<T> | Promise<T>,
@@ -56,7 +20,7 @@ export async function withQueryTimeout<T = any>(
   let timer: any;
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
-      console.warn(`[dataCache] Operação excedeu timeout suave de ${timeoutMs}ms.`);
+      console.warn(`[CMCred] Consulta excedeu ${timeoutMs}ms — retornando fallback silencioso.`);
       resolve(fallbackValue);
     }, timeoutMs);
   });
@@ -64,9 +28,22 @@ export async function withQueryTimeout<T = any>(
   try {
     return await Promise.race([Promise.resolve(promise), timeoutPromise]);
   } catch (err) {
-    console.warn('[dataCache] Erro capturado em consulta:', err);
+    console.warn('[CMCred] Erro silencioso em consulta de dados:', err);
     return fallbackValue;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Stubs mantidos para compatibilidade de importação (não fazem nada)
+export function loadCachedData<T>(_key: string, defaultVal: T | null = null): T | null {
+  return defaultVal;
+}
+
+export function saveCachedData<T>(_key: string, _data: T): void {
+  // Sem localStorage — dados vivem apenas no estado React
+}
+
+export function clearCachedData(_key: string): void {
+  // Sem localStorage
 }
