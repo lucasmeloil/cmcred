@@ -118,7 +118,8 @@ const Financeiro: React.FC = () => {
 
       const [financeRes, loansRes] = await withQueryTimeout(
         Promise.all([financeQuery, loansQuery]),
-        7000
+        15000,
+        [{ data: null }, { data: null }]
       );
 
       if (financeRes?.data) {

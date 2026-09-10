@@ -119,7 +119,8 @@ const MachinesManager: React.FC = () => {
           supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
           supabase.from('banks').select('*').order('name', { ascending: true })
         ]),
-        6000
+        15000,
+        [{ data: null }, { data: null }]
       );
 
       if (machRes?.data) {

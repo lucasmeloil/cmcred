@@ -108,7 +108,8 @@ const ReportsManager: React.FC = () => {
           supabase.from('profiles').select('id, full_name, role'),
           supabase.from('machines').select('id, name').order('name')
         ]),
-        7000
+        15000,
+        [{ data: null }, { data: null }, { data: null }, { data: null }]
       );
 
       if (loansRes?.data) {

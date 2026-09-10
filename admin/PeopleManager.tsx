@@ -79,7 +79,7 @@ const PeopleManager: React.FC = () => {
           .from('customers')
           .select('*')
           .order('created_at', { ascending: false }),
-        6000
+        15000
       );
 
       if (error) {

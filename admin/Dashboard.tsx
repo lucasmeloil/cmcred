@@ -179,8 +179,14 @@ const Dashboard: React.FC = () => {
           supabase.from('customers').select('count', { count: 'exact' }),
           supabase.from('finance').select('*')
         ]),
-        7000
+        15000,
+        [{ data: null }, { count: 0 }, { count: 0 }, { data: null }]
       );
+
+      // Se a resposta falhar mas já tínhamos dados em tela, preservar sem zerar
+      if (!loansRes?.data && recentLoansRef.current.length > 0) {
+        return;
+      }
 
       let loans = loansRes?.data || [];
       let finance = financeRes?.data || [];

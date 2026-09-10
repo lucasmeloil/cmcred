@@ -99,12 +99,13 @@ const LoanRequests: React.FC = () => {
           supabase.from('banks').select('*').order('name'),
           supabase.from('machines').select('*').order('name')
         ]),
-        7000
+        15000,
+        [{ data: null }, { data: null }, { data: null }]
       );
 
       if (loansRes?.error) {
-        console.error('Erro ao consultar empréstimos:', loansRes.error);
-      } else if (loansRes?.data) {
+        console.warn('Erro ou latência ao consultar empréstimos:', loansRes.error);
+      } else if (loansRes?.data && Array.isArray(loansRes.data)) {
         let rawLoans = loansRes.data;
         if (!isAdmin && currentUser?.id) {
           rawLoans = rawLoans.filter((l: any) => l.consultant_id === currentUser.id);
@@ -121,23 +122,22 @@ const LoanRequests: React.FC = () => {
         saveCachedData(CACHE_KEY_LOANS, mapped);
       }
 
-      if (banksRes?.data) {
+      if (banksRes?.data && Array.isArray(banksRes.data) && banksRes.data.length > 0) {
         setBanks(banksRes.data);
         saveCachedData(CACHE_KEY_LOAN_BANKS, banksRes.data);
       }
 
-      if (machinesRes?.data) {
+      if (machinesRes?.data && Array.isArray(machinesRes.data) && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);
         saveCachedData(CACHE_KEY_LOAN_MACHINES, machinesRes.data);
       }
     } catch (err: any) {
-      console.error('Erro ao buscar empréstimos:', err);
-      addNotification('Erro ao sincronizar empréstimos: ' + (err?.message || 'Erro de rede'), 'alerta');
+      console.warn('Sincronização em segundo plano de empréstimos:', err);
     } finally {
       clearTimeout(safetyTimer);
       setLoading(false);
     }
-  }, [isAdmin, currentUser?.id, addNotification]);
+  }, [isAdmin, currentUser?.id]);
 
   useEffect(() => {
     fetchInitialData();

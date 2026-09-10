@@ -41,7 +41,7 @@ const App: React.FC = () => {
   const adminSections = [
     '#admin', '#login', '#painel', '#consultor', '#dashboard', 
     '#financeiro', '#solicitacoes', '#relatorios', '#pessoas', 
-    '#maquininhas', '#taxas_simulador', '#usuarios', '#logs', 
+    '#maquininhas', '#taxas_simulador', '#usuarios', 
     '#tutoriais', '#simulador', '#novo_emprestimo', '#bandeiras'
   ];
 

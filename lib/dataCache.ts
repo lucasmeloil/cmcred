@@ -44,22 +44,28 @@ export function clearCachedData(key: string): void {
 }
 
 /**
- * Envolve uma Promise em um timeout rígido para evitar que queries fiquem presas em "loading..."
+ * Executa uma Promise com timeout de segurança longo (15s) e tratamento tolerante a falhas.
+ * NUNCA lança erro não-tratado que quebre a interface ou gere toasts vermelhos de alerta;
+ * caso atinja o timeout ou falhe, retorna fallbackValue seguro.
  */
 export async function withQueryTimeout<T = any>(
   promise: PromiseLike<T> | Promise<T>,
-  timeoutMs = 8000,
-  timeoutMessage = 'Operação excedeu o tempo limite'
+  timeoutMs = 15000,
+  fallbackValue: T = { data: null, error: null } as any
 ): Promise<T> {
   let timer: any;
-  const timeoutPromise = new Promise<never>((_, reject) => {
+  const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => {
-      reject(new Error(timeoutMessage));
+      console.warn(`[dataCache] Operação excedeu timeout suave de ${timeoutMs}ms.`);
+      resolve(fallbackValue);
     }, timeoutMs);
   });
 
   try {
     return await Promise.race([Promise.resolve(promise), timeoutPromise]);
+  } catch (err) {
+    console.warn('[dataCache] Erro capturado em consulta:', err);
+    return fallbackValue;
   } finally {
     clearTimeout(timer);
   }

@@ -9,7 +9,6 @@ import {
   ClipboardList, 
   Wallet, 
   ShieldCheck, 
-  History,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -38,7 +37,6 @@ const NAV_ITEMS: SidebarItem[] = [
   { id: 'financeiro', icon: <Wallet size={20} />, label: 'Financeiro' },
   { id: 'relatorios', icon: <FileDown size={20} />, label: 'Relatórios Gerais' },
   { id: 'usuarios', icon: <ShieldCheck size={20} />, label: 'Acessos' },
-  { id: 'logs', icon: <History size={20} />, label: 'Auditoria' },
   { id: 'tutoriais', icon: <BookOpen size={20} />, label: 'Central de Ajuda' },
 ];
 

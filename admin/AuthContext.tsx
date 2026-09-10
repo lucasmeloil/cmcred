@@ -131,10 +131,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const allPermissions: UserPermissions = {
         dashboard: true, create_loan: true, loans: true, delete_loans: true,
         finance: true, machines: true, card_flags: true, leads: true,
-        customers: true, reports: true, users: true, audit: true,
+        customers: true, reports: true, users: true,
         lucros: true, novo_emprestimo: true, solicitacoes: true, financeiro: true,
         maquininhas: true, taxas_simulador: true, relatorios: true, usuarios: true,
-        logs: true, pessoas: true, simulador: true
+        pessoas: true, simulador: true
       };
 
       const resolvedPermissions: UserPermissions = (isSuperAdmin || isAdminUser) ? allPermissions : (() => {
@@ -142,9 +142,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           ...basePerms,
           users: false,
-          usuarios: false,
-          audit: false,
-          logs: false
+          usuarios: false
         };
       })();
 
@@ -203,10 +201,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           permissions: {
             dashboard: true, create_loan: true, loans: true, delete_loans: true,
             finance: true, machines: true, card_flags: true, leads: true,
-            customers: true, reports: true, users: true, audit: true,
+            customers: true, reports: true, users: true,
             lucros: true, novo_emprestimo: true, solicitacoes: true, financeiro: true,
             maquininhas: true, taxas_simulador: true, relatorios: true, usuarios: true,
-            logs: true, pessoas: true, simulador: true
+            pessoas: true, simulador: true
           },
           dataCriacao: new Date().toISOString(),
           ultimoLogin: new Date().toISOString()
@@ -499,7 +497,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       case 'financeiro': return Boolean(perms.finance || perms.financeiro);
       case 'relatorios': return Boolean(perms.reports || perms.relatorios);
       case 'usuarios': return false; // Restrito exclusivamente para Admin
-      case 'logs': return false; // Restrito exclusivamente para Admin
       case 'tutoriais': return true;
       default: return false;
     }

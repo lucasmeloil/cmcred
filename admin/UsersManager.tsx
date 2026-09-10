@@ -44,7 +44,29 @@ const PERMISSION_DEFINITIONS: Array<{
   { key: 'finance', altKeys: ['financeiro', 'lucros'], label: 'Módulo Financeiro & Lucros', desc: 'Acessar contas a pagar/receber, conciliação e repasses PIX', icon: <DollarSign size={16} color="#dc2626" />, danger: true },
   { key: 'reports', altKeys: ['relatorios'], label: 'Relatórios Gerais & Exportação', desc: 'Exportar relatórios contábeis e analíticos em PDF e planilhas', icon: <FileText size={16} color="#6366f1" /> },
   { key: 'users', altKeys: ['usuarios'], label: 'Gestão de Acessos', desc: 'Criar outros usuários e modificar senhas e privilégios (Exclusivo Admin)', icon: <Key size={16} color="#dc2626" />, danger: true, adminOnly: true },
-  { key: 'audit', altKeys: ['logs'], label: 'Auditoria do Sistema', desc: 'Visualizar logs de segurança e rastreamento forense', icon: <Shield size={16} color="#475569" />, adminOnly: true },
+];
+
+const DEFAULT_INITIAL_ADMINS: AdminUser[] = [
+  {
+    id: 'a0e73455-9526-4cdf-a0f5-7bf47e2e3ce8',
+    nome: 'Caique (Super Admin)',
+    email: 'caique@cmcred.com.br',
+    perfil: 'admin',
+    status: 'active',
+    dataCriacao: new Date().toISOString(),
+    commission_percentage: 0,
+    permissions: ADMIN_PERMISSIONS
+  },
+  {
+    id: 'aa38eec1-3a64-4e17-ab16-401d032b81b3',
+    nome: 'Lucas (Admin Geral)',
+    email: 'lucas@teste.com.br',
+    perfil: 'admin',
+    status: 'active',
+    dataCriacao: new Date().toISOString(),
+    commission_percentage: 0,
+    permissions: ADMIN_PERMISSIONS
+  }
 ];
 
 const TABS = [
@@ -67,13 +89,16 @@ const UsersManager: React.FC = () => {
 
   const isConsultantUser = currentUser?.perfil === 'consultant' && !isSuperAdmin;
 
-  const [users, setUsers] = useState<AdminUser[]>(() => loadCachedData<AdminUser[]>(CACHE_KEY_USERS, []) || []);
+  const [users, setUsers] = useState<AdminUser[]>(() => {
+    const cached = loadCachedData<AdminUser[]>(CACHE_KEY_USERS);
+    return (cached && cached.length > 0) ? cached : DEFAULT_INITIAL_ADMINS;
+  });
   const usersRef = useRef(users);
   useEffect(() => { usersRef.current = users; }, [users]);
 
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState<boolean>(() => !(loadCachedData<AdminUser[]>(CACHE_KEY_USERS)?.length));
+  const [loading, setLoading] = useState<boolean>(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [editPassword, setEditPassword] = useState('');
   const [activeTab, setActiveTab] = useState('all');
@@ -96,7 +121,7 @@ const UsersManager: React.FC = () => {
     email: '',
     password: '',
     role: 'consultant' as UserRole,
-    permissions: { ...DEFAULT_PERMISSIONS, users: false, usuarios: false, audit: false, logs: false }
+    permissions: { ...DEFAULT_PERMISSIONS, users: false, usuarios: false }
   });
 
   const handleRoleChangeNew = (role: UserRole) => {
@@ -109,9 +134,7 @@ const UsersManager: React.FC = () => {
         permissions: { 
           ...DEFAULT_PERMISSIONS, 
           users: false, 
-          usuarios: false, 
-          audit: false, 
-          logs: false 
+          usuarios: false 
         } 
       }));
     }

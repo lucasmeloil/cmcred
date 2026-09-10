@@ -21,7 +21,7 @@ export interface UserPermissions {
   customers: boolean;
   reports: boolean;
   users: boolean;
-  audit: boolean;
+  audit?: boolean;
   lucros?: boolean;
   novo_emprestimo?: boolean;
   solicitacoes?: boolean;

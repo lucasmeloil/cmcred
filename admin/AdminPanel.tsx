@@ -7,7 +7,6 @@ import Topbar from './Topbar';
 import Dashboard from './Dashboard';
 import LoanRequests from './LoanRequests';
 import UsersManager from './UsersManager';
-import AuditLogs from './AuditLogs';
 import PeopleManager from './PeopleManager';
 import Simulator from './Simulator';
 import CreateLoan from './CreateLoan';
@@ -52,7 +51,6 @@ const SECTION_CONFIG: Record<string, { title: string; subtitle: string }> = {
   financeiro: { title: 'Controle Financeiro', subtitle: 'Gestão de fluxo de caixa, repasses e lucro líquido' },
   relatorios: { title: 'Central de Relatórios', subtitle: 'Auditoria financeira consolidada e exportação de dados' },
   usuarios: { title: 'Gestão de Acessos', subtitle: 'Controle de privilégios e operadores de sistema' },
-  logs: { title: 'Auditoria de Sistema', subtitle: 'Rastreamento forense de atividades administrativas' },
   tutoriais: { title: 'Central de Ajuda & Tutoriais', subtitle: 'Manuais operacionais, passo a passo e base de conhecimento' },
 };
 
@@ -231,7 +229,6 @@ const AdminApp: React.FC = () => {
       case 'financeiro': return <Financeiro />;
       case 'relatorios': return <ReportsManager />;
       case 'usuarios': return <UsersManager />;
-      case 'logs': return <AuditLogs />;
       case 'tutoriais': return <Tutorials onNavigate={setActiveSection} />;
       default: return <Dashboard />;
     }
