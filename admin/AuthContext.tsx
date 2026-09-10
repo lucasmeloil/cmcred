@@ -259,24 +259,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       activeSessionUserIdRef.current = newSession?.user?.id || null;
       if (newSession?.user?.id) {
         setSession(newSession);
+        try { localStorage.setItem('cmcred_active_user_session', 'true'); } catch {}
         await fetchProfile(newSession.user.id, newSession.user.email);
       } else if (_event === 'SIGNED_OUT') {
+        // ITEM 6: Garantir que o botão "Sair do Sistema" seja o ÚNICO gatilho de logout — NUNCA por inatividade ou troca de aba!
         if (isExplicitLogoutRef.current) {
           setSession(null);
           setCurrentUser(null);
           activeSessionUserIdRef.current = null;
-          try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
+          try { 
+            localStorage.removeItem(CACHED_USER_KEY); 
+            localStorage.removeItem('cmcred_active_user_session');
+          } catch {}
         } else {
-          try {
-            const { data: currentSess } = await supabase.auth.getSession();
-            if (currentSess?.session?.user) {
-              setSession(currentSess.session);
-              activeSessionUserIdRef.current = currentSess.session.user.id;
-              await fetchProfile(currentSess.session.user.id, currentSess.session.user.email);
-            }
-          } catch (e) {
-            console.warn('Recuperação de sessão transiente:', e);
-          }
+          // Ignora logout involuntário e preserva sessão em cache
+          console.warn('[AuthContext] Evento SIGNED_OUT involuntário ignorado. Mantendo sessão ativa.');
         }
       }
       setIsLoading(false);
@@ -307,16 +304,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       )
       .subscribe();
 
-    // Verificação periódica de validade do token (a cada 4 minutos) e renovação silenciosa
+    // Verificação periódica de validade do token (a cada 3 minutos) e renovação silenciosa (Item 2)
     const tokenRefreshInterval = setInterval(async () => {
-      if (!isMounted) return;
+      if (!isMounted || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
       try {
         const { data: { session: curSess } } = await supabase.auth.getSession();
         if (curSess?.expires_at) {
           const nowSec = Math.floor(Date.now() / 1000);
           const timeUntilExpiry = curSess.expires_at - nowSec;
-          // Se expira em menos de 10 minutos (600s), renova silenciosamente
-          if (timeUntilExpiry < 600) {
+          // Se expira em menos de 15 minutos (900s), renova silenciosamente
+          if (timeUntilExpiry < 900) {
             const { data: refreshed } = await supabase.auth.refreshSession();
             if (refreshed?.session) {
               setSession(refreshed.session);
@@ -326,11 +323,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (err) {
         console.warn('Verificação silenciosa de token:', err);
       }
-    }, 240000);
+    }, 180000);
 
-    // Revalidação suave de sessão ao retornar para a aba (visibilitychange e focus)
+    // Revalidação suave de sessão ao retornar para a aba (Item 5: visibilitychange e focus com cooldown de 15s)
+    let lastVisibilityCheckTime = 0;
     const handleVisibilityChange = async () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && isMounted) {
+        const now = Date.now();
+        if (now - lastVisibilityCheckTime < 15000) return;
+        lastVisibilityCheckTime = now;
         try {
           const { data: { session: activeSession } } = await supabase.auth.getSession();
           if (activeSession?.user) {
@@ -411,7 +412,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {}
     setCurrentUser(null);
     setSession(null);
-    try { localStorage.removeItem(CACHED_USER_KEY); } catch {}
+    try { 
+      localStorage.removeItem(CACHED_USER_KEY); 
+      localStorage.removeItem('cmcred_active_user_session');
+    } catch {}
     isExplicitLogoutRef.current = false;
   }, []);
 

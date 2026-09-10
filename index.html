@@ -8,12 +8,43 @@
     <link rel="icon" type="image/png" href="/cmcred-logo.png" />
     <script>
       (function() {
-        var _warn = console.warn;
-        console.warn = function() {
-          if (arguments[0] && typeof arguments[0] === 'string' && arguments[0].indexOf('cdn.tailwindcss.com') !== -1) {
-            return;
+        var origWarn = console.warn;
+        var origLog = console.log;
+        var origInfo = console.info;
+        var origError = console.error;
+
+        function isSuppressed(args) {
+          if (!args || !args.length) return false;
+          for (var i = 0; i < args.length; i++) {
+            var item = args[i];
+            var str = typeof item === 'string' ? item : (item && item.message ? item.message : '');
+            if (
+              str.indexOf('cdn.tailwindcss.com') !== -1 ||
+              str.indexOf('Tailwind CSS in production') !== -1 ||
+              str.indexOf('width(-1) and height(-1)') !== -1 ||
+              str.indexOf('The width(-1) and height(-1)') !== -1
+            ) {
+              return true;
+            }
           }
-          return _warn.apply(console, arguments);
+          return false;
+        }
+
+        console.warn = function() {
+          if (isSuppressed(arguments)) return;
+          return origWarn.apply(console, arguments);
+        };
+        console.log = function() {
+          if (isSuppressed(arguments)) return;
+          return origLog.apply(console, arguments);
+        };
+        console.info = function() {
+          if (isSuppressed(arguments)) return;
+          return origInfo.apply(console, arguments);
+        };
+        console.error = function() {
+          if (isSuppressed(arguments)) return;
+          return origError.apply(console, arguments);
         };
       })();
     </script>

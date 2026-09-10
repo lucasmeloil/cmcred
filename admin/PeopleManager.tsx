@@ -71,7 +71,7 @@ const PeopleManager: React.FC = () => {
     }
     const safetyTimer = setTimeout(() => {
       setLoading(false);
-    }, 3000);
+    }, 1800);
 
     try {
       const { data, error } = await withQueryTimeout(
@@ -83,13 +83,13 @@ const PeopleManager: React.FC = () => {
       );
 
       if (error) {
-        console.error('Erro ao buscar clientes:', error);
-      } else if (data) {
+        console.warn('Erro ao buscar clientes:', error);
+      } else if (data && data.length > 0) {
         setPeople(data);
         saveCachedData(CACHE_KEY_PEOPLE, data);
       }
     } catch (err) {
-      console.error('Erro ao buscar pessoas:', err);
+      console.warn('Erro ao buscar pessoas:', err);
     } finally {
       clearTimeout(safetyTimer);
       setLoading(false);
@@ -98,6 +98,8 @@ const PeopleManager: React.FC = () => {
 
   useEffect(() => {
     fetchPeople();
+    const safety = setTimeout(() => setLoading(false), 1500);
+    return () => clearTimeout(safety);
   }, [fetchPeople]);
 
   // Hook de Sincronização em Tempo Real com Auto-Heal (sem F5 e sem perda de dados)
@@ -484,7 +486,10 @@ const PeopleManager: React.FC = () => {
 
       <div style={{ background: '#ffffff', borderRadius: '24px', border: '1px solid #f1f5f9', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)' }}>
         {loading && people.length === 0 ? (
-          <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b', fontWeight: 600 }}>Carregando cadastros...</div>
+          <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b', fontWeight: 600, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
+            <Loader2 size={32} color="#d97706" style={{ animation: 'spin 1s linear infinite' }} />
+            <span>Sincronizando cadastros com o servidor...</span>
+          </div>
         ) : filtered.length === 0 ? (
           <div style={{ padding: '4rem', textAlign: 'center', color: '#64748b', fontWeight: 600 }}>Nenhum cadastro encontrado.</div>
         ) : (

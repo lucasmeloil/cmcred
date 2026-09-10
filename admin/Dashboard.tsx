@@ -688,8 +688,8 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* 12-Month Bar Chart */}
-        <div style={{ height: '360px', minWidth: 0 }}>
-          <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 360 }}>
+        <div style={{ height: '360px', minHeight: '360px', width: '100%', minWidth: 0 }}>
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 500, height: 360 }}>
             <BarChart data={stats.monthlyStats || []} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
               <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 11, fontWeight: 800 }} />
@@ -724,8 +724,8 @@ const Dashboard: React.FC = () => {
               {isAdmin ? "Evolução de Fluxo: Repasse (Caixa) vs Lucro Real" : "Evolução de Fluxo de Repasses (PIX)"}
             </h3>
           </div>
-          <div style={{ height: '320px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 320 }}>
+          <div style={{ height: '320px', minHeight: '320px', width: '100%', minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 500, height: 320 }}>
               <AreaChart data={stats.evolutionStats} margin={{ left: 10, right: 10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorVolume" x1="0" y1="0" x2="0" y2="1">
@@ -760,8 +760,8 @@ const Dashboard: React.FC = () => {
             <Layers size={18} color="#d97706" />
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Liquidez: Preferência de Termos (Parcelas)</h3>
           </div>
-          <div style={{ height: '320px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 320 }}>
+          <div style={{ height: '320px', minHeight: '320px', width: '100%', minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 500, height: 320 }}>
               <BarChart data={stats.installmentStats} margin={{ bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11, fontWeight: 800}} />
@@ -791,8 +791,8 @@ const Dashboard: React.FC = () => {
             <Smartphone size={18} color="#d97706" />
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Performance Financeira por Maquininha</h3>
           </div>
-          <div style={{ height: '300px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 300 }}>
+          <div style={{ height: '300px', minHeight: '300px', width: '100%', minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 500, height: 300 }}>
               <BarChart data={stats.machineStats} layout="vertical" margin={{ left: 10, right: 20 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                 <XAxis type="number" hide />
@@ -818,8 +818,8 @@ const Dashboard: React.FC = () => {
             <Landmark size={18} color="#d97706" />
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: '1rem', fontWeight: 800 }}>Destino da Liquidez por Instituição Bancária</h3>
           </div>
-          <div style={{ height: '300px', minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={100} minHeight={100} initialDimension={{ width: 500, height: 300 }}>
+          <div style={{ height: '300px', minHeight: '300px', width: '100%', minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0} initialDimension={{ width: 500, height: 300 }}>
               <PieChart>
                 <Pie
                   data={stats.bankStats}

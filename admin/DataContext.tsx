@@ -5,6 +5,7 @@ import { useAuth } from './AuthContext';
 import type { LoanRequest, Customer, FinanceEntry, Machine, Bank } from './types';
 import { calculateLoanFinancials, fetchRatesFromDatabase, TABELA_1_RATES, TABELA_2_RATES } from '../lib/rates';
 import { useRealtimeSync, type RealtimeSyncStatus } from '../lib/useRealtimeSync';
+import { withQueryTimeout } from '../lib/dataCache';
 
 // =========================================================================
 // TIPOS DO CONTEXTO DE DADOS EM TEMPO REAL
@@ -74,6 +75,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const currentLoansRef = useRef<LoanRequest[]>([]);
   const currentFinanceRef = useRef<FinanceEntry[]>([]);
   const currentCustomersRef = useRef<Customer[]>([]);
+  const lastRevalidateTimeRef = useRef<number>(0);
+  const isExecutingRevalidateRef = useRef<boolean>(false);
 
   useEffect(() => {
     currentLoansRef.current = loans;
@@ -87,10 +90,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     currentCustomersRef.current = customers;
   }, [customers]);
 
+  // Unblock garantido em montagem
+  useEffect(() => {
+    const safety = setTimeout(() => {
+      setLoading(false);
+    }, 1200);
+    return () => clearTimeout(safety);
+  }, []);
+
   // =======================================================================
-  // REVALIDAÇÃO TOTAL COM PROTEÇÃO ANTI-ZERAMENTO
+  // REVALIDAÇÃO TOTAL COM PROTEÇÃO ANTI-ZERAMENTO E TIMEOUT
   // =======================================================================
   const revalidateAll = useCallback(async (isSilent = false) => {
+    const now = Date.now();
+    if (isExecutingRevalidateRef.current || (isSilent && now - lastRevalidateTimeRef.current < 25000)) {
+      return;
+    }
+    lastRevalidateTimeRef.current = now;
+    isExecutingRevalidateRef.current = true;
+
     if (!hasLoadedOnceRef.current && !isSilent) {
       setLoading(true);
     } else {
@@ -98,35 +116,38 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      // 1. Dispara consultas paralelas de dados
-
-      // 2. Dispara consultas paralelas de dados
-      const loansQuery = supabase
-        .from('loans')
-        .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
-        .order('created_at', { ascending: false });
+      const loansQuery = withQueryTimeout(
+        supabase
+          .from('loans')
+          .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
+          .order('created_at', { ascending: false }),
+        8000
+      );
 
       const [loansRes, custRes, finRes, machRes, banksRes, ratesRes] = await Promise.all([
         loansQuery,
-        supabase.from('customers').select('*').order('created_at', { ascending: false }),
-        supabase.from('finance').select('*').order('due_date', { ascending: false }),
-        supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }),
-        supabase.from('banks').select('*').order('name', { ascending: true }),
+        withQueryTimeout(supabase.from('customers').select('*').order('created_at', { ascending: false }), 6000),
+        withQueryTimeout(supabase.from('finance').select('*').order('due_date', { ascending: false }), 6000),
+        withQueryTimeout(supabase.from('machines').select('*, banks(name)').order('name', { ascending: true }), 6000),
+        withQueryTimeout(supabase.from('banks').select('*').order('name', { ascending: true }), 6000),
         fetchRatesFromDatabase()
       ]);
 
-      let rawLoans = loansRes.data || [];
-      let rawFinance = finRes.data || [];
-      let rawCustomers = custRes.data || [];
+      let rawLoans = loansRes?.data || [];
+      let rawFinance = finRes?.data || [];
+      let rawCustomers = custRes?.data || [];
 
       // Fallback com supabaseAdmin para evitar RLS temporário ao acordar a aba
       if (rawLoans.length === 0 && (isSuperAdmin || !currentUser?.id)) {
         try {
-          const adminLoans = await supabaseAdmin
-            .from('loans')
-            .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
-            .order('created_at', { ascending: false });
-          if (adminLoans.data && adminLoans.data.length > 0) {
+          const adminLoans = await withQueryTimeout(
+            supabaseAdmin
+              .from('loans')
+              .select('*, leads(name, phone), customers(name, phone), banks(name), machines(name, fee_percentage, installment_fees, liquidation_days), profiles:consultant_id(full_name)')
+              .order('created_at', { ascending: false }),
+            6000
+          );
+          if (adminLoans?.data && adminLoans.data.length > 0) {
             rawLoans = adminLoans.data;
           }
         } catch {}
@@ -148,35 +169,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }));
         setLoans(mappedLoans);
       }
-
-      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
-        setFinance(rawFinance);
-      }
-
       if (rawCustomers.length > 0 || !hasLoadedOnceRef.current) {
         setCustomers(rawCustomers);
       }
-
-      if (machRes.data && (machRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+      if (rawFinance.length > 0 || !hasLoadedOnceRef.current) {
+        setFinance(rawFinance);
+      }
+      if (machRes?.data && machRes.data.length > 0) {
         setMachines(machRes.data);
       }
-
-      if (banksRes.data && (banksRes.data.length > 0 || !hasLoadedOnceRef.current)) {
+      if (banksRes?.data && banksRes.data.length > 0) {
         setBanks(banksRes.data);
       }
-
-      if (ratesRes.ratesT1 && Object.keys(ratesRes.ratesT1).length > 0) {
-        setRatesT1(ratesRes.ratesT1);
-      }
-      if (ratesRes.ratesT2 && Object.keys(ratesRes.ratesT2).length > 0) {
-        setRatesT2(ratesRes.ratesT2);
+      if (ratesRes) {
+        if (ratesRes.ratesT1) setRatesT1(ratesRes.ratesT1);
+        if (ratesRes.ratesT2) setRatesT2(ratesRes.ratesT2);
       }
 
       hasLoadedOnceRef.current = true;
       setLastSync(new Date());
     } catch (err) {
-      console.error('Erro na sincronização de dados:', err);
+      console.warn('Sincronização em segundo plano DataContext:', err);
     } finally {
+      isExecutingRevalidateRef.current = false;
       setLoading(false);
       setIsRevalidating(false);
     }

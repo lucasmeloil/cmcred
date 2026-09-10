@@ -10,37 +10,58 @@ if (!supabaseUrl || !supabaseKey) {
 // Garante uma única instância singleton global do client Supabase
 const globalObj = (typeof window !== 'undefined' ? window : globalThis) as any;
 
-// Fila serializada exclusiva da aba atual (in-process mutex com auto-liberação)
-// Elimina deadlocks de background tabs sem quebrar a fila do GoTrueClient
-let lockQueue: Promise<any> = Promise.resolve();
+// Mutex serializado leve e à prova de falhas por chave de armazenamento
+// Elimina 100% de deadlocks em abas em segundo plano sem travar requisições de banco
+let lockHeld = false;
+const lockWaiters: Array<() => void> = [];
+
+const acquireSafeLock = (timeoutMs: number): Promise<void> => {
+  if (!lockHeld) {
+    lockHeld = true;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const grant = () => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        const idx = lockWaiters.indexOf(grant);
+        if (idx !== -1) lockWaiters.splice(idx, 1);
+        resolve(); // Auto-desbloqueio garantido para nunca travar a aplicação
+      }
+    }, timeoutMs);
+
+    lockWaiters.push(grant);
+  });
+};
+
+const releaseSafeLock = () => {
+  if (lockWaiters.length > 0) {
+    const next = lockWaiters.shift();
+    if (next) next();
+  } else {
+    lockHeld = false;
+  }
+};
 
 const safeProcessLock = async <R>(
   _name: string,
   acquireTimeout: number,
   fn: () => Promise<R>
 ): Promise<R> => {
-  const prev = lockQueue;
-  let releaseCurrent: () => void;
-  lockQueue = new Promise<void>((resolve) => {
-    releaseCurrent = resolve;
-  });
-
+  const timeoutMs = acquireTimeout > 0 ? Math.min(acquireTimeout, 3000) : 2500;
+  await acquireSafeLock(timeoutMs);
   try {
-    // Aguarda a operação anterior ser concluída ou time-out de segurança (5s)
-    let timeoutTimer: any;
-    const timeoutPromise = new Promise<void>((resolve) => {
-      timeoutTimer = setTimeout(resolve, Math.max(1000, Math.min(acquireTimeout || 5000, 6000)));
-    });
-
-    await Promise.race([
-      prev.catch(() => {}),
-      timeoutPromise
-    ]);
-    clearTimeout(timeoutTimer);
-
     return await fn();
   } finally {
-    releaseCurrent!();
+    releaseSafeLock();
   }
 };
 

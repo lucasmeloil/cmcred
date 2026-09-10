@@ -974,8 +974,8 @@ const Financeiro: React.FC = () => {
               </span>
             </div>
             
-            <div style={{ height: '330px' }}>
-              <ResponsiveContainer width="100%" height="100%">
+            <div style={{ height: '330px', minHeight: '330px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <AreaChart data={stats.evolutionChart}>
                   <defs>
                     <linearGradient id="colorVolPix" x1="0" y1="0" x2="0" y2="1">
@@ -1072,8 +1072,8 @@ const Financeiro: React.FC = () => {
               <h3 style={{ margin: '0 0 1.5rem', color: '#0f172a', fontSize: '1.1rem', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Layers size={20} color="#d97706" /> Volume e Lucro por Modalidade de Empréstimo
               </h3>
-              <div style={{ height: '300px' }}>
-                <ResponsiveContainer width="100%" height="100%">
+              <div style={{ height: '300px', minHeight: '300px', width: '100%' }}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <BarChart data={stats.modalidadeList}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#0f172a', fontWeight: 800, fontSize: 12 }} />
@@ -1092,8 +1092,8 @@ const Financeiro: React.FC = () => {
               <h3 style={{ margin: '0 0 1.5rem', color: '#0f172a', fontSize: '1.1rem', fontWeight: 900, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Smartphone size={20} color="#d97706" /> Desempenho por Maquininha / Adquirente
               </h3>
-              <div style={{ height: '300px' }}>
-                <ResponsiveContainer width="100%" height="100%">
+              <div style={{ height: '300px', minHeight: '300px', width: '100%' }}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                   <BarChart data={stats.machineList} layout="vertical" margin={{ left: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                     <XAxis type="number" tickFormatter={val => `R$ ${(val/1000).toFixed(0)}k`} />

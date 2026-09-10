@@ -41,10 +41,10 @@ export function useRealtimeSync({
 
   const targetTables = tables && tables.length > 0 ? tables : table ? [table] : ['loans'];
 
-  // Executa o refresh seguro evitando sobreposição e requisições excessivas (cooldown 1s para silent)
+  // Executa o refresh seguro evitando sobreposição e requisições excessivas (cooldown 2s para silent)
   const triggerRefresh = useCallback(async (isSilent = true) => {
     const now = Date.now();
-    if (isRefreshingRef.current || (isSilent && now - lastRefreshTimeRef.current < 1000)) {
+    if (isRefreshingRef.current || (isSilent && now - lastRefreshTimeRef.current < 2000)) {
       return;
     }
     lastRefreshTimeRef.current = now;
@@ -127,22 +127,37 @@ export function useRealtimeSync({
     setupChannel();
     triggerRefresh(false);
 
-    // 2. Quando o usuário volta para a aba (troca de aba, desbloqueia tela ou acorda computador)
+    // 2. Listener de Visibilidade Inteligente (Item 5 do Usuário):
+    // Pausa a sincronização quando a aba está oculta para não sobrecarregar rede ou sessão,
+    // e retoma suavemente em segundo plano ao retornar sem desconectar o usuário.
     const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        // Força busca imediata para recuperar o que ocorreu em segundo plano
-        triggerRefresh(true);
+      if (typeof document !== 'undefined') {
+        if (document.visibilityState === 'hidden') {
+          // Pausa ativa: não dispara requisições enquanto o usuário está em outra aba
+          return;
+        }
 
-        // Se o canal morreu enquanto estava fora (status fechado ou nulo), remonta com auto-heal
-        if (!channelRef.current || (channelRef.current as any).state === 'closed') {
-          setupChannel();
+        if (document.visibilityState === 'visible') {
+          // Auto-heal: reconecta o canal se a conexão websocket caiu durante o repouso
+          if (!channelRef.current || (channelRef.current as any).state === 'closed') {
+            setupChannel();
+          }
+
+          // Apenas busca dados se a aba ficou inativa por mais de 20 segundos
+          const timeSinceLast = Date.now() - lastRefreshTimeRef.current;
+          if (timeSinceLast > 20000) {
+            triggerRefresh(true);
+          }
         }
       }
     };
 
-    // 3. Quando a janela ganha foco
+    // 3. Quando a janela ganha foco (apenas revalida se passou mais de 25s)
     const handleFocus = () => {
-      triggerRefresh(true);
+      const timeSinceLast = Date.now() - lastRefreshTimeRef.current;
+      if (timeSinceLast > 25000) {
+        triggerRefresh(true);
+      }
     };
 
     // 4. Quando a conexão cai e volta
@@ -155,7 +170,7 @@ export function useRealtimeSync({
       setSyncStatus('disconnected');
     };
 
-    // 5. Polling de contingência (Heartbeat de segurança leve)
+    // 5. Polling de contingência (Heartbeat leve: só roda se visível e conectado)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible' && navigator.onLine) {
         triggerRefresh(true);
