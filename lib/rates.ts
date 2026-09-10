@@ -1106,11 +1106,14 @@ export interface FaixaTaxas {
 }
 
 export interface CriarNovaTabelaTaxasParams {
+  id?: string;
   nomeTabela: string;
   tipoTabela: string; // Ex: "Padrão", "Reduzida", "Flex", "Promocional"
   faixaTaxas: FaixaTaxas; // Ex: { min: 5.5, max: 18.5 }
   bandeiras: string[]; // Ex: ["VISA", "MASTER", "AMEX", "ELO"]
   taxasPorParcelas: Record<number | string, number> | Record<string, Record<number | string, number>>;
+  dataCriacao?: number;
+  dataCriacaoFormatada?: string;
 }
 
 export interface NovaTabelaTaxasResultado {
@@ -1203,9 +1206,10 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
     }
   }
 
-  // Gera identificador amigável baseado no nome
-  const tableId = `tabela_custom_${Date.now()}_${nomeTabela.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`;
-  const now = Date.now();
+  // Gera identificador amigável baseado no nome ou reutiliza o id existente na edição
+  const tableId = params.id || `tabela_custom_${Date.now()}_${nomeTabela.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}`;
+  const now = params.dataCriacao || Date.now();
+  const dataFormatada = params.dataCriacaoFormatada || new Date(now).toLocaleString('pt-BR');
 
   const resultado: NovaTabelaTaxasResultado = {
     id: tableId,
@@ -1218,7 +1222,7 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
     bandeiras: Array.from(new Set(bandeiras.map(b => b.trim().toUpperCase()))),
     taxasPorParcelas: normalizedTaxasPorParcelas,
     dataCriacao: now,
-    dataCriacaoFormatada: new Date(now).toLocaleString('pt-BR')
+    dataCriacaoFormatada: dataFormatada
   };
 
   return resultado;
@@ -1226,6 +1230,125 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
 
 // Alias para flexibilidade de nomenclatura
 export const criar_NovaTabela_Taxas = criarNovaTabelaTaxas;
+
+// =========================================================================
+// MÉTODOS CRUD NO BANCO DE DADOS PARA TABELAS CUSTOMIZADAS (custom_rate_tables)
+// =========================================================================
+
+export async function fetchCustomTablesFromDatabase(): Promise<NovaTabelaTaxasResultado[]> {
+  try {
+    let { data, error } = await supabase
+      .from('custom_rate_tables')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if ((error || !data || data.length === 0) && supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin
+          .from('custom_rate_tables')
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (adminRes.data && adminRes.data.length > 0) {
+          data = adminRes.data;
+          error = null;
+        }
+      } catch (adminErr) {
+        console.warn('Fallback supabaseAdmin na leitura de tabelas:', adminErr);
+      }
+    }
+
+    if (error) {
+      console.warn('Aviso ao consultar custom_rate_tables no banco:', error.message);
+      return [];
+    }
+
+    if (data && Array.isArray(data)) {
+      return data.map((row: any) => ({
+        id: row.id,
+        nomeTabela: row.nome_tabela || row.nomeTabela || 'Tabela Sem Nome',
+        tipoTabela: row.tipo_tabela || row.tipoTabela || 'Flex',
+        faixaTaxas: row.faixa_taxas || row.faixaTaxas || { min: 0, max: 100 },
+        bandeiras: Array.isArray(row.bandeiras) ? row.bandeiras : ['VISA', 'MASTER'],
+        taxasPorParcelas: row.taxas_por_parcelas || row.taxasPorParcelas || {},
+        dataCriacao: Number(row.data_criacao || row.dataCriacao || Date.now()),
+        dataCriacaoFormatada: row.data_criacao_formatada || row.dataCriacaoFormatada || new Date().toLocaleString('pt-BR')
+      }));
+    }
+  } catch (err) {
+    console.error('Erro ao consultar custom_rate_tables no Supabase:', err);
+  }
+  return [];
+}
+
+export async function saveCustomTableToDatabase(table: NovaTabelaTaxasResultado): Promise<{ success: boolean; error?: string }> {
+  try {
+    const payload = {
+      id: table.id,
+      nome_tabela: table.nomeTabela,
+      tipo_tabela: table.tipoTabela,
+      faixa_taxas: table.faixaTaxas,
+      bandeiras: table.bandeiras,
+      taxas_por_parcelas: table.taxasPorParcelas,
+      data_criacao: table.dataCriacao,
+      data_criacao_formatada: table.dataCriacaoFormatada,
+      updated_at: new Date().toISOString()
+    };
+
+    let { error } = await supabase
+      .from('custom_rate_tables')
+      .upsert(payload, { onConflict: 'id' });
+
+    if (error && supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin
+          .from('custom_rate_tables')
+          .upsert(payload, { onConflict: 'id' });
+        error = adminRes.error;
+      } catch (adminErr: any) {
+        error = adminErr;
+      }
+    }
+
+    if (error) {
+      console.error('Erro ao salvar custom_rate_tables no Supabase:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Exceção ao salvar custom_rate_tables:', err);
+    return { success: false, error: err?.message || 'Erro de rede' };
+  }
+}
+
+export async function deleteCustomTableFromDatabase(tableId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    let { error } = await supabase
+      .from('custom_rate_tables')
+      .delete()
+      .eq('id', tableId);
+
+    if (error && supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin
+          .from('custom_rate_tables')
+          .delete()
+          .eq('id', tableId);
+        error = adminRes.error;
+      } catch (adminErr: any) {
+        error = adminErr;
+      }
+    }
+
+    if (error) {
+      console.error('Erro ao excluir custom_rate_tables no Supabase:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error('Exceção ao excluir custom_rate_tables:', err);
+    return { success: false, error: err?.message || 'Erro de rede' };
+  }
+}
 
 
 

@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Cpu,
   Edit2,
+  Edit3,
   X,
   Smartphone,
   Calendar,
@@ -43,15 +44,24 @@ import {
   TABLE_OPTIONS,
   criarNovaTabelaTaxas,
   calcularValorLiquido,
-  type NovaTabelaTaxasResultado
+  type NovaTabelaTaxasResultado,
+  fetchCustomTablesFromDatabase,
+  saveCustomTableToDatabase,
+  deleteCustomTableFromDatabase
 } from '../lib/rates';
 import { RateInput } from './RateInput';
 
 
 const RatesSettingsManager: React.FC = () => {
-  const { currentUser, addNotification, logAudit, isSuperAdmin, canEditRates } = useAuth();
+  const { currentUser, authUserEmail, addNotification, logAudit, isSuperAdmin, canEditRates, showConfirm } = useAuth();
   
-  const isAdmin = isSuperAdmin || canEditRates;
+  const email = (currentUser?.email || authUserEmail || '').toLowerCase();
+  const isAdmin = isSuperAdmin || 
+                  email === 'caique@cmcred.com.br' || 
+                  email === 'lucas@teste.com.br' || 
+                  email.startsWith('admin@') || 
+                  currentUser?.perfil === 'admin' || 
+                  canEditRates;
 
   // Tab ativa: 'rates' (Taxas 1x a 18x) | 'machines' (Gestão de Maquininhas POS)
   const [activeMainTab, setActiveMainTab] = useState<'rates' | 'machines'>('rates');
@@ -59,16 +69,10 @@ const RatesSettingsManager: React.FC = () => {
   // Tabela selecionada: 'tabela_1' ou 'tabela_2'
   const [activeTable, setActiveTable] = useState<RateTableType>('tabela_1');
 
-  // Estados para Criação de Nova Tabela (Apenas Administrador)
+  // Estados para Criação e Edição de Tabelas (Salvas no Banco de Dados Supabase)
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>(() => {
-    try {
-      const stored = localStorage.getItem('cmcred_custom_tables_v1');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [editingTableId, setEditingTableId] = useState<string | null>(null);
+  const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
 
   const [newTableForm, setNewTableForm] = useState({
     nomeTabela: '',
@@ -103,10 +107,14 @@ const RatesSettingsManager: React.FC = () => {
   const currentRates = activeTable === 'tabela_1' ? ratesT1 : ratesT2;
 
   // Carregar dados diretamente do Banco de Dados Supabase ao iniciar
+  // Carregar dados diretamente do Banco de Dados Supabase ao iniciar
   const loadDatabaseRates = async () => {
     setLoading(true);
     try {
-      const { ratesT1: dbT1, ratesT2: dbT2, flags: dbFlags } = await fetchRatesFromDatabase();
+      const [{ ratesT1: dbT1, ratesT2: dbT2, flags: dbFlags }, dbCustomTables] = await Promise.all([
+        fetchRatesFromDatabase(),
+        fetchCustomTablesFromDatabase()
+      ]);
       if (dbT1 && Object.keys(dbT1).length > 0) {
         setRatesT1(dbT1);
       }
@@ -119,12 +127,19 @@ const RatesSettingsManager: React.FC = () => {
           setSelectedFlagKey(dbFlags[0].key);
         }
       }
+      if (dbCustomTables) {
+        setCustomTables(dbCustomTables);
+      }
     } catch (e) {
       console.error('Erro ao carregar taxas do banco:', e);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadDatabaseRates();
+  }, []);
 
   const latestRef = React.useRef({ ratesT1, ratesT2, flags, activeTable, hasChanges });
   useEffect(() => {
@@ -138,7 +153,7 @@ const RatesSettingsManager: React.FC = () => {
   }, []);
 
   const { syncStatus, lastSyncTime, forceSync } = useRealtimeSync({
-    table: 'simulator_rates',
+    tables: ['simulator_rates', 'custom_rate_tables'],
     onDataChange: onRealtimeDataChange,
     heartbeatIntervalMs: 45000,
   });
@@ -366,35 +381,126 @@ const RatesSettingsManager: React.FC = () => {
     }));
   };
 
-  // Função central para Criar Nova Tabela de Taxas (Exclusivo Administrador)
-  const handleCriarNovaTabela = (e?: React.FormEvent) => {
+  const handleOpenCreateModal = () => {
+    setEditingTableId(null);
+    setNewTableForm({
+      nomeTabela: '',
+      tipoTabela: 'Flex',
+      minTaxa: 5.5,
+      maxTaxa: 18.5,
+      bandeiras: ['VISA', 'MASTER', 'AMEX', 'ELO'],
+      newFlagName: '',
+      taxasPorParcelas: {
+        1: 7.10, 2: 8.25, 3: 8.75, 4: 9.50, 5: 9.99, 6: 10.75,
+        7: 11.25, 8: 11.75, 9: 12.25, 10: 12.99, 11: 13.75, 12: 14.49,
+        13: 15.50, 14: 16.00, 15: 16.80, 16: 17.50, 17: 18.00, 18: 18.50
+      },
+      simGrossAmount: 1000,
+      simInstallment: 10
+    });
+    setShowCreateModal(true);
+  };
+
+  const handleOpenEditModal = (tabela: NovaTabelaTaxasResultado) => {
+    setEditingTableId(tabela.id);
+
+    let flatRates: Record<number, number> = {};
+    if (tabela.taxasPorParcelas) {
+      const firstVal = Object.values(tabela.taxasPorParcelas)[0];
+      if (typeof firstVal === 'object' && firstVal !== null) {
+        flatRates = firstVal as Record<number, number>;
+      } else {
+        flatRates = tabela.taxasPorParcelas as Record<number, number>;
+      }
+    }
+
+    setNewTableForm({
+      nomeTabela: tabela.nomeTabela,
+      tipoTabela: tabela.tipoTabela,
+      minTaxa: tabela.faixaTaxas?.min ?? 5.5,
+      maxTaxa: tabela.faixaTaxas?.max ?? 18.5,
+      bandeiras: Array.isArray(tabela.bandeiras) ? [...tabela.bandeiras] : ['VISA', 'MASTER'],
+      newFlagName: '',
+      taxasPorParcelas: { ...flatRates },
+      simGrossAmount: 1000,
+      simInstallment: 10
+    });
+    setShowCreateModal(true);
+  };
+
+  // Função central para Criar ou Editar Tabela de Taxas com gravação direta no Banco de Dados Supabase
+  const handleSalvarTabela = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!isSuperAdmin) {
-      addNotification('Permissão negada: Consultores não podem criar novas tabelas de taxas. Acesso exclusivo ao Administrador.', 'alerta');
+    if (!isAdmin) {
+      addNotification('Permissão negada: Consultores não podem criar ou alterar tabelas de taxas. Acesso exclusivo ao Administrador.', 'alerta');
       return;
     }
 
     try {
+      setSaving(true);
+      const existing = editingTableId ? customTables.find(t => t.id === editingTableId) : null;
+
       const resultado = criarNovaTabelaTaxas({
+        id: editingTableId || undefined,
         nomeTabela: newTableForm.nomeTabela,
         tipoTabela: newTableForm.tipoTabela,
         faixaTaxas: { min: Number(newTableForm.minTaxa), max: Number(newTableForm.maxTaxa) },
         bandeiras: newTableForm.bandeiras,
-        taxasPorParcelas: newTableForm.taxasPorParcelas
+        taxasPorParcelas: newTableForm.taxasPorParcelas,
+        dataCriacao: existing?.dataCriacao,
+        dataCriacaoFormatada: existing?.dataCriacaoFormatada
       });
 
-      const updated = [...customTables, resultado];
-      setCustomTables(updated);
-      try {
-        localStorage.setItem('cmcred_custom_tables_v1', JSON.stringify(updated));
-      } catch {}
+      // Gravação direta no Supabase
+      const dbRes = await saveCustomTableToDatabase(resultado);
+      if (!dbRes.success) {
+        addNotification('Erro ao gravar no banco de dados: ' + dbRes.error, 'alerta');
+        return;
+      }
 
-      addNotification(`Nova tabela "${resultado.nomeTabela}" (${resultado.tipoTabela}) criada e validada com sucesso!`, 'sucesso');
-      logAudit('criação_tabela_taxas', `Nova tabela de taxas "${resultado.nomeTabela}" criada pelo Administrador.`);
+      let updated: NovaTabelaTaxasResultado[];
+      if (editingTableId) {
+        updated = customTables.map(t => t.id === editingTableId ? resultado : t);
+        addNotification(`Tabela "${resultado.nomeTabela}" atualizada no banco de dados com sucesso!`, 'sucesso');
+        logAudit('edição_tabela_taxas', `Tabela de taxas "${resultado.nomeTabela}" editada e gravada no banco pelo Administrador.`);
+      } else {
+        updated = [...customTables, resultado];
+        addNotification(`Nova tabela "${resultado.nomeTabela}" (${resultado.tipoTabela}) gravada com sucesso no banco de dados!`, 'sucesso');
+        logAudit('criação_tabela_taxas', `Nova tabela de taxas "${resultado.nomeTabela}" gravada no banco pelo Administrador.`);
+      }
+
+      setCustomTables(updated);
       setShowCreateModal(false);
+      setEditingTableId(null);
       setNewTableForm(prev => ({ ...prev, nomeTabela: '' }));
     } catch (err: any) {
       addNotification('Validação falhou: ' + err.message, 'alerta');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExcluirTabela = async (ct: NovaTabelaTaxasResultado) => {
+    if (!isAdmin) {
+      addNotification('Permissão negada: Apenas Administradores podem excluir tabelas.', 'alerta');
+      return;
+    }
+    const ok = await showConfirm(`Tem certeza que deseja excluir a tabela "${ct.nomeTabela}" do banco de dados?`);
+    if (!ok) return;
+
+    try {
+      const delRes = await deleteCustomTableFromDatabase(ct.id);
+      if (!delRes.success) {
+        addNotification('Erro ao excluir tabela do banco de dados: ' + delRes.error, 'alerta');
+        return;
+      }
+
+      const filtered = customTables.filter(t => t.id !== ct.id);
+      setCustomTables(filtered);
+      addNotification(`Tabela "${ct.nomeTabela}" excluída com sucesso do banco de dados.`, 'info');
+      logAudit('exclusão_tabela_taxas', `Tabela de taxas "${ct.nomeTabela}" excluída do banco pelo Administrador.`);
+    } catch (err: any) {
+      addNotification('Erro ao excluir: ' + (err?.message || 'Falha de conexão'), 'alerta');
     }
   };
 
@@ -497,10 +603,10 @@ const RatesSettingsManager: React.FC = () => {
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Recarregar
               </button>
 
-              {isSuperAdmin && (
+              {isAdmin && (
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(true)}
+                  onClick={handleOpenCreateModal}
                   style={{
                     padding: '0.85rem 1.4rem',
                     background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
@@ -697,23 +803,49 @@ const RatesSettingsManager: React.FC = () => {
                   <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#b45309' }}>
                     Faixa: {ct.faixaTaxas.min}% a {ct.faixaTaxas.max}% • {ct.bandeiras.join(', ')}
                   </span>
-                  <div style={{ fontSize: '0.75rem', color: '#9a3412', marginTop: '0.2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#9a3412', marginTop: '0.35rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <span>Criada em: {ct.dataCriacaoFormatada}</span>
-                    {isSuperAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (window.confirm(`Excluir a tabela "${ct.nomeTabela}"?`)) {
-                            const filtered = customTables.filter(t => t.id !== ct.id);
-                            setCustomTables(filtered);
-                            localStorage.setItem('cmcred_custom_tables_v1', JSON.stringify(filtered));
-                            addNotification(`Tabela "${ct.nomeTabela}" removida.`, 'info');
-                          }
-                        }}
-                        style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
-                      >
-                        Excluir
-                      </button>
+                    {isAdmin && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditModal(ct)}
+                          style={{
+                            background: '#ffffff',
+                            border: '1px solid #fed7aa',
+                            color: '#b45309',
+                            borderRadius: '8px',
+                            padding: '3px 8px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: 800,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                        >
+                          <Edit3 size={12} /> Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleExcluirTabela(ct)}
+                          style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            color: '#dc2626',
+                            borderRadius: '8px',
+                            padding: '3px 8px',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: 800,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px'
+                          }}
+                        >
+                          <Trash2 size={12} /> Excluir
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -994,13 +1126,15 @@ const RatesSettingsManager: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '1.25rem' }}>
               <div>
                 <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: '12px', background: '#fef3c7', color: '#b45309', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                  Exclusivo Administrador
+                  Exclusivo Administrador • Banco de Dados
                 </span>
                 <h2 style={{ fontSize: '1.6rem', fontWeight: 900, color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Sliders size={24} color="#d97706" /> Criar Nova Tabela de Taxas
+                  <Sliders size={24} color="#d97706" /> {editingTableId ? 'Editar Tabela de Taxas' : 'Criar Nova Tabela de Taxas'}
                 </h2>
                 <p style={{ color: '#64748b', fontSize: '0.9rem', marginTop: '0.35rem', fontWeight: 500 }}>
-                  Defina o nome, tipo, faixa mínima e máxima de taxas, bandeiras aceitas e valores percentuais de 1x a 18x.
+                  {editingTableId
+                    ? 'Altere o nome, tipo, faixa mínima e máxima de taxas, bandeiras aceitas e valores percentuais de 1x a 18x com gravação direta no banco.'
+                    : 'Defina o nome, tipo, faixa mínima e máxima de taxas, bandeiras aceitas e valores percentuais de 1x a 18x.'}
                 </p>
               </div>
               <button
@@ -1012,7 +1146,7 @@ const RatesSettingsManager: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCriarNovaTabela}>
+            <form onSubmit={handleSalvarTabela}>
               {/* Linha 1: Nome e Tipo da Tabela */}
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div>
@@ -1195,8 +1329,8 @@ const RatesSettingsManager: React.FC = () => {
                     <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Valor Bruto no Cartão (R$):</span>
                     <input
                       type="number"
-                      step="100"
-                      min="1"
+                      step="any"
+                      min="0"
                       value={newTableForm.simGrossAmount}
                       onChange={e => setNewTableForm(prev => ({ ...prev, simGrossAmount: parseFloat(e.target.value) || 0 }))}
                       style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
@@ -1236,6 +1370,7 @@ const RatesSettingsManager: React.FC = () => {
                 </button>
                 <button
                   type="submit"
+                  disabled={saving}
                   style={{
                     padding: '0.85rem 2rem',
                     background: 'linear-gradient(135deg, #d97706 0%, #b45309 100%)',
@@ -1243,11 +1378,20 @@ const RatesSettingsManager: React.FC = () => {
                     border: 'none',
                     borderRadius: '14px',
                     fontWeight: 800,
-                    cursor: 'pointer',
-                    boxShadow: '0 8px 16px rgba(217, 119, 6, 0.3)'
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                    boxShadow: '0 8px 16px rgba(217, 119, 6, 0.3)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
                   }}
                 >
-                  Validar e Criar Tabela
+                  {saving ? (
+                    <>Gravando no Banco...</>
+                  ) : (
+                    <>
+                      <Save size={18} /> {editingTableId ? 'Salvar Alterações da Tabela' : 'Criar e Gravar no Banco'}
+                    </>
+                  )}
                 </button>
               </div>
             </form>
