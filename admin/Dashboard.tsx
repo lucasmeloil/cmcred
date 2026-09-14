@@ -139,7 +139,7 @@ const Dashboard: React.FC = () => {
                   email === 'lucas@teste.com.br' || 
                   email.startsWith('admin@') || 
                   currentUser?.perfil === 'admin';
-  const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator');
+  const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator' || currentUser?.perfil === 'consultor_externo');
 
   const [stats, setStats] = useState(() => loadCachedData(CACHE_KEY_DASH_STATS, DEFAULT_DASHBOARD_STATS) || DEFAULT_DASHBOARD_STATS);
   const [recentLoans, setRecentLoans] = useState<any[]>(() => loadCachedData<any[]>(CACHE_KEY_DASH_LOANS, []) || []);

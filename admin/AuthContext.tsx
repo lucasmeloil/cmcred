@@ -508,12 +508,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                        emailLower.startsWith('admin@') ||
                        isSuperAdminEmail(emailLower) ||
                        currentUser?.perfil === 'admin';
-  const isConsultant = !isSuperAdmin && currentUser?.perfil === 'consultant';
+  const isConsultant = !isSuperAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo');
 
   const canAccessSection = useCallback((sec: string): boolean => {
     if (isSuperAdmin || currentUser?.perfil === 'admin') return true;
     if (!currentUser) return false;
     const perms = (currentUser?.permissions || {}) as any;
+    // Consultores externos e internos têm as mesmas restrições de acesso por seção
+    const isExternalConsultant = currentUser.perfil === 'consultor_externo';
 
     switch (sec) {
       case 'dashboard': return Boolean(perms.dashboard);

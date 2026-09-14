@@ -55,7 +55,7 @@ const CreateLoan: React.FC = () => {
     email.includes('caique') ||
     email.includes('admin') ||
     currentUser?.perfil === 'admin';
-  const isConsultant = !isAdmin && currentUser?.perfil === 'consultant';
+  const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo');
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -210,7 +210,7 @@ const CreateLoan: React.FC = () => {
   useEffect(() => {
     fetchData();
 
-    if (currentUser && ['consultant', 'operator', 'manager'].includes(currentUser.perfil)) {
+    if (currentUser && ['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser.perfil)) {
       setFormData(prev => ({ ...prev, consultant_id: prev.consultant_id || currentUser.id }));
     }
 
@@ -799,15 +799,15 @@ const CreateLoan: React.FC = () => {
           <div>
             <label style={labelStyle}><UserCheck size={15} color="#d97706" /> Operador / Consultor Responsável</label>
             <select
-              style={{ ...inputStyle, background: currentUser?.perfil === 'consultant' ? '#f8fafc' : '#ffffff', height: '50px' }}
+              style={{ ...inputStyle, background: (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo') ? '#f8fafc' : '#ffffff', height: '50px' }}
               value={formData.consultant_id || ''}
               onChange={e => setFormData({ ...formData, consultant_id: e.target.value || null })}
-              disabled={currentUser?.perfil === 'consultant'}
+              disabled={currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo'}
             >
-              {!['consultant', 'operator', 'manager'].includes(currentUser?.perfil || '') && (
+              {!['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') && (
                 <option value="">Operação Direta da Empresa (Sem Consultor)</option>
               )}
-              {['consultant', 'operator', 'manager'].includes(currentUser?.perfil || '') ? (
+              {['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') ? (
                 <option value={currentUser?.id}>{currentUser?.nome} (Sua Operação)</option>
               ) : (
                 consultants.map(c => (

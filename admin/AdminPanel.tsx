@@ -100,7 +100,7 @@ const AdminApp: React.FC = () => {
   // Sincronização dinâmica de rota: /consultor vs /admin
   useEffect(() => {
     if (currentUser) {
-      const isConsultant = currentUser.perfil === 'consultant';
+      const isConsultant = currentUser.perfil === 'consultant' || currentUser.perfil === 'consultor_externo';
       const targetPath = isConsultant ? '/consultor' : '/admin';
       if (window.location.pathname !== targetPath) {
         window.history.replaceState(null, '', targetPath);

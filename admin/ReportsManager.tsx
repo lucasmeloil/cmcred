@@ -129,7 +129,7 @@ const ReportsManager: React.FC = () => {
         saveCachedData(CACHE_KEY_REPORTS_FINANCE, financeRes.data);
       }
       if (profilesRes?.data && profilesRes.data.length > 0) {
-        setConsultants(profilesRes.data.filter((p: any) => p.role === 'consultant' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
+        setConsultants(profilesRes.data.filter((p: any) => p.role === 'consultant' || p.role === 'consultor_externo' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
       }
       if (machinesRes?.data && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);

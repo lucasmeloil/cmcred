@@ -2,7 +2,7 @@
 // Admin Panel Types
 // ========================
 
-export type UserRole = 'admin' | 'manager' | 'operator' | 'consultant';
+export type UserRole = 'admin' | 'manager' | 'operator' | 'consultant' | 'consultor_externo';
 export type UserStatus = 'active' | 'inactive';
 export type LeadOrigin = 'LP' | 'campanha' | 'indicação' | 'site' | 'whatsapp';
 export type LoanType = 'cartão' | 'consignado' | 'FGTS' | 'pessoal';
@@ -83,6 +83,33 @@ export const ADMIN_PERMISSIONS: UserPermissions = {
   relatorios: true,
   usuarios: true,
   logs: true,
+  pessoas: true,
+  simulador: true,
+};
+
+// Permissões padrão para Consultor Externo (mais restritivas — sem dashboard por padrão)
+export const EXTERNAL_CONSULTANT_PERMISSIONS: UserPermissions = {
+  dashboard: false,
+  create_loan: true,
+  loans: true,
+  delete_loans: false,
+  finance: false,
+  machines: false,
+  card_flags: false,
+  leads: true,
+  customers: true,
+  reports: false,
+  users: false,
+  audit: false,
+  lucros: false,
+  novo_emprestimo: true,
+  solicitacoes: true,
+  financeiro: false,
+  maquininhas: false,
+  taxas_simulador: false,
+  relatorios: false,
+  usuarios: false,
+  logs: false,
   pessoas: true,
   simulador: true,
 };

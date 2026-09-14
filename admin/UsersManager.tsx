@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import type { AdminUser, UserRole, UserStatus, UserPermissions } from './types';
-import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS } from './types';
+import { DEFAULT_PERMISSIONS, ADMIN_PERMISSIONS, EXTERNAL_CONSULTANT_PERMISSIONS } from './types';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
 import { isSuperAdminEmail } from '../lib/security';
@@ -18,10 +18,11 @@ import { loadCachedData, saveCachedData, withQueryTimeout } from '../lib/dataCac
 const CACHE_KEY_USERS = 'cmcred_cache_users_list';
 
 const roleConfig: Record<string, { color: string; bg: string; label: string; icon: React.ReactNode }> = {
-  admin:      { color: '#d97706', bg: '#fffbeb', label: 'Administrador (Super Admin)', icon: <Shield size={14} /> },
-  manager:    { color: '#2563eb', bg: '#eff6ff', label: 'Gestor de Equipe',            icon: <UserCheck size={14} /> },
-  consultant: { color: '#d97706', bg: '#fffbeb', label: 'Consultor Financeiro',       icon: <Users size={14} /> },
-  operator:   { color: '#7c3aed', bg: '#f5f3ff', label: 'Operador de Sistema',         icon: <Users size={14} /> },
+  admin:             { color: '#d97706', bg: '#fffbeb', label: 'Administrador (Super Admin)', icon: <Shield size={14} /> },
+  manager:           { color: '#2563eb', bg: '#eff6ff', label: 'Gestor de Equipe',            icon: <UserCheck size={14} /> },
+  consultant:        { color: '#d97706', bg: '#fffbeb', label: 'Consultor Financeiro',        icon: <Users size={14} /> },
+  consultor_externo: { color: '#7c3aed', bg: '#f5f3ff', label: 'Consultor Externo',           icon: <Shield size={14} /> },
+  operator:          { color: '#64748b', bg: '#f8fafc', label: 'Operador de Sistema',          icon: <Users size={14} /> },
 };
 
 const PERMISSION_DEFINITIONS: Array<{
@@ -70,10 +71,11 @@ const DEFAULT_INITIAL_ADMINS: AdminUser[] = [
 ];
 
 const TABS = [
-  { id: 'all',        label: 'Todos'         },
-  { id: 'consultant', label: 'Consultores'   },
-  { id: 'manager',    label: 'Gestores'      },
-  { id: 'admin',      label: 'Admins'        },
+  { id: 'all',               label: 'Todos'           },
+  { id: 'consultant',        label: 'Consultores'     },
+  { id: 'consultor_externo', label: 'Ext. Externos'   },
+  { id: 'manager',           label: 'Gestores'        },
+  { id: 'admin',             label: 'Admins'          },
 ];
 
 const UsersManager: React.FC = () => {
@@ -127,6 +129,8 @@ const UsersManager: React.FC = () => {
   const handleRoleChangeNew = (role: UserRole) => {
     if (role === 'admin') {
       setNewUser(prev => ({ ...prev, role, permissions: { ...ADMIN_PERMISSIONS } }));
+    } else if (role === 'consultor_externo') {
+      setNewUser(prev => ({ ...prev, role, permissions: { ...EXTERNAL_CONSULTANT_PERMISSIONS } }));
     } else {
       setNewUser(prev => ({ 
         ...prev, 
@@ -141,7 +145,7 @@ const UsersManager: React.FC = () => {
   };
 
   const toggleNewPermission = (p: typeof PERMISSION_DEFINITIONS[0]) => {
-    if (p.adminOnly && newUser.role === 'consultant') {
+    if (p.adminOnly && (newUser.role === 'consultant' || newUser.role === 'consultor_externo')) {
       addNotification('Consultores não têm permissão para acessar ' + p.label, 'alerta');
       return;
     }
@@ -157,7 +161,7 @@ const UsersManager: React.FC = () => {
 
   const toggleEditPermission = (p: typeof PERMISSION_DEFINITIONS[0]) => {
     if (!editingUser) return;
-    if (p.adminOnly && editingUser.perfil === 'consultant') {
+    if (p.adminOnly && (editingUser.perfil === 'consultant' || editingUser.perfil === 'consultor_externo')) {
       addNotification('Consultores não podem ter acesso ao módulo de ' + p.label, 'alerta');
       return;
     }
@@ -371,9 +375,9 @@ const UsersManager: React.FC = () => {
       const password = newUser.password.trim();
       const fullName = newUser.full_name.trim();
 
-      // Sanitizar permissões para consultores: NUNCA permitir módulo de Acessos
+      // Sanitizar permissões para consultores e consultores externos: NUNCA permitir módulo de Acessos
       const sanitizedPermissions = { ...newUser.permissions };
-      if (newUser.role === 'consultant') {
+      if (newUser.role === 'consultant' || newUser.role === 'consultor_externo') {
         sanitizedPermissions.users = false;
         sanitizedPermissions.usuarios = false;
         sanitizedPermissions.audit = false;
@@ -435,7 +439,7 @@ const UsersManager: React.FC = () => {
           full_name: '', 
           email: '', 
           password: '', 
-          role: 'consultant', 
+          role: 'consultant' as UserRole, 
           permissions: { ...DEFAULT_PERMISSIONS, users: false, usuarios: false, audit: false, logs: false } 
         });
         await fetchUsers();
@@ -471,10 +475,10 @@ const UsersManager: React.FC = () => {
                                editingUser.email.toLowerCase() === 'lucas@teste.com.br';
       const finalRole = isSuperAdminUser ? 'admin' : editingUser.perfil;
       
-      // Sanitizar permissões para consultores
+      // Sanitizar permissões para consultores e consultores externos
       const basePerms = isSuperAdminUser ? ADMIN_PERMISSIONS : (editingUser.permissions || DEFAULT_PERMISSIONS);
       const finalPerms = { ...basePerms };
-      if (finalRole === 'consultant') {
+      if (finalRole === 'consultant' || finalRole === 'consultor_externo') {
         finalPerms.users = false;
         finalPerms.usuarios = false;
         finalPerms.audit = false;
@@ -622,7 +626,7 @@ const UsersManager: React.FC = () => {
                   full_name: '', 
                   email: '', 
                   password: '', 
-                  role: 'consultant', 
+                  role: 'consultant' as UserRole, 
                   permissions: { ...DEFAULT_PERMISSIONS, users: false, usuarios: false, audit: false, logs: false } 
                 });
                 setShowNew(true);
@@ -677,6 +681,7 @@ const UsersManager: React.FC = () => {
           {tabFiltered.map(user => {
             const isSuperAdminUser = user.email.toLowerCase() === 'caique@cmcred.com.br' || user.email.toLowerCase() === 'lucas@teste.com.br';
             const isAdminUser = isSuperAdminUser || user.email.toLowerCase().includes('admin') || user.perfil === 'admin';
+            const isExternalConsultant = user.perfil === 'consultor_externo';
             const rc = isAdminUser ? roleConfig.admin : (roleConfig[user.perfil] || roleConfig.operator);
             const isActive = user.status === 'active';
             const perms = user.permissions || DEFAULT_PERMISSIONS;
@@ -684,10 +689,20 @@ const UsersManager: React.FC = () => {
             return (
               <div key={user.id} style={{ 
                 background: '#fff', 
-                border: isSuperAdminUser ? '2.5px solid #d97706' : (isAdminUser ? '2px solid #f59e0b' : '1px solid #f1f5f9'), 
+                border: isSuperAdminUser 
+                  ? '2.5px solid #d97706' 
+                  : isAdminUser 
+                    ? '2px solid #f59e0b' 
+                    : isExternalConsultant 
+                      ? '1.5px solid #7c3aed40' 
+                      : '1px solid #f1f5f9', 
                 borderRadius: '24px', 
                 padding: '1.75rem', 
-                boxShadow: isSuperAdminUser ? '0 8px 25px -4px rgba(217,119,6,0.2)' : '0 4px 10px -2px rgba(0,0,0,0.05)', 
+                boxShadow: isSuperAdminUser 
+                  ? '0 8px 25px -4px rgba(217,119,6,0.2)' 
+                  : isExternalConsultant 
+                    ? '0 4px 14px -2px rgba(124,58,237,0.12)' 
+                    : '0 4px 10px -2px rgba(0,0,0,0.05)', 
                 display: 'flex', 
                 flexDirection: 'column', 
                 gap: '1.25rem',
@@ -702,6 +717,17 @@ const UsersManager: React.FC = () => {
                     boxShadow: '0 2px 10px rgba(217,119,6,0.4)', textTransform: 'uppercase', letterSpacing: '0.5px' 
                   }}>
                     {isSuperAdminUser ? '👑 Super Administrador Geral' : '👑 Administrador CM CRED'}
+                  </div>
+                )}
+                {isExternalConsultant && (
+                  <div style={{ 
+                    position: 'absolute', top: '-12px', right: '20px', 
+                    background: 'linear-gradient(135deg, #6d28d9 0%, #7c3aed 100%)', 
+                    color: '#fff', fontSize: '0.7rem', 
+                    fontWeight: 900, padding: '4px 14px', borderRadius: '100px', 
+                    boxShadow: '0 2px 10px rgba(124,58,237,0.35)', textTransform: 'uppercase', letterSpacing: '0.5px' 
+                  }}>
+                    🔗 Consultor Externo
                   </div>
                 )}
 
@@ -977,6 +1003,7 @@ const UsersManager: React.FC = () => {
                 <label style={{ display: 'block', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Função / Cargo</label>
                 <select style={inputStyle} value={newUser.role} onChange={e => handleRoleChangeNew(e.target.value as UserRole)}>
                   <option value="consultant">Consultor (Salário Fixo)</option>
+                  <option value="consultor_externo">Consultor Externo</option>
                   <option value="manager">Gestor</option>
                   <option value="operator">Operador</option>
                   <option value="admin">Administrador</option>
@@ -995,7 +1022,7 @@ const UsersManager: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem' }}>
                 {PERMISSION_DEFINITIONS.map(p => {
-                  const isBlockedForConsultant = p.adminOnly && newUser.role === 'consultant';
+                  const isBlockedForConsultant = p.adminOnly && (newUser.role === 'consultant' || newUser.role === 'consultor_externo');
                   const isChecked = isBlockedForConsultant ? false : Boolean(newUser.permissions[p.key]);
 
                   return (
@@ -1066,10 +1093,15 @@ const UsersManager: React.FC = () => {
                 <label style={{ display: 'block', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Nível de Acesso</label>
                 <select style={inputStyle} value={editingUser.perfil} onChange={e => {
                   const newRole = e.target.value as UserRole;
-                  const perms = newRole === 'admin' ? ADMIN_PERMISSIONS : (editingUser.permissions || DEFAULT_PERMISSIONS);
+                  const perms = newRole === 'admin'
+                    ? ADMIN_PERMISSIONS
+                    : newRole === 'consultor_externo'
+                      ? EXTERNAL_CONSULTANT_PERMISSIONS
+                      : (editingUser.permissions || DEFAULT_PERMISSIONS);
                   setEditingUser({ ...editingUser, perfil: newRole, permissions: perms });
                 }}>
                   <option value="consultant">Consultor (Salário Fixo)</option>
+                  <option value="consultor_externo">Consultor Externo</option>
                   <option value="manager">Gestor</option>
                   <option value="operator">Operador</option>
                   <option value="admin">Administrador (Super Admin)</option>
@@ -1095,7 +1127,7 @@ const UsersManager: React.FC = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0.75rem' }}>
                 {PERMISSION_DEFINITIONS.map(p => {
-                  const isBlockedForConsultant = p.adminOnly && editingUser.perfil === 'consultant';
+                  const isBlockedForConsultant = p.adminOnly && (editingUser.perfil === 'consultant' || editingUser.perfil === 'consultor_externo');
                   const currentPerms = editingUser.permissions || DEFAULT_PERMISSIONS;
                   const isChecked = isBlockedForConsultant ? false : Boolean(currentPerms[p.key]);
 
