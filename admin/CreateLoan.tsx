@@ -48,14 +48,17 @@ import { liveSyncBus } from '../lib/liveSyncBus';
 import { loadCachedData } from '../lib/dataCache';
 
 const CreateLoan: React.FC = () => {
-  const { currentUser, addNotification, logAudit } = useAuth();
+  const { currentUser, addNotification, logAudit, isConsultant: authIsConsultant } = useAuth();
   const email = currentUser?.email?.toLowerCase() || '';
   const isAdmin = email === 'caique@cmcred.com.br' ||
     email === 'lucas@teste.com.br' ||
     email.includes('caique') ||
     email.includes('admin') ||
     currentUser?.perfil === 'admin';
-  const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo');
+  const isConsultant = Boolean(authIsConsultant) || (!isAdmin && (
+    currentUser?.perfil === 'consultant' ||
+    currentUser?.perfil === 'consultor_externo'
+  ));
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -876,7 +879,9 @@ const CreateLoan: React.FC = () => {
             >
               {machines.map(m => (
                 <option key={m.id} value={m.id.toString()}>
-                  {m.name} — {Number(m.liquidation_days) === 0 ? '⚡ D+0 (Cai na hora / Mesmo dia)' : `📅 D+${m.liquidation_days || 1} (${m.liquidation_days === 1 ? 'Próximo dia útil' : `${m.liquidation_days} dias úteis`})`}
+                  {isConsultant
+                    ? m.name
+                    : `${m.name} — ${Number(m.liquidation_days) === 0 ? '⚡ D+0 (Cai na hora / Mesmo dia)' : `📅 D+${m.liquidation_days || 1} (${m.liquidation_days === 1 ? 'Próximo dia útil' : `${m.liquidation_days} dias úteis`})`}`}
                 </option>
               ))}
             </select>
