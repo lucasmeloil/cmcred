@@ -129,7 +129,7 @@ const CreateLoan: React.FC = () => {
         supabase.from('leads').select('*').order('name'),
         supabase.from('customers').select('*').order('name'),
         supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name'),
-        supabase.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name'),
+        supabase.from('profiles').select('*').in('role', ['consultant', 'consultor_externo', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name'),
         fetchCustomTablesFromDatabase()
       ]);
 
@@ -157,7 +157,7 @@ const CreateLoan: React.FC = () => {
           !profilesRes.data ||
           profilesRes.data.length === 0;
         if (needsAdminProfiles) {
-          const fb = await supabaseAdmin.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name');
+          const fb = await supabaseAdmin.from('profiles').select('*').in('role', ['consultant', 'consultor_externo', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name');
           if (fb.data && fb.data.length > 0) profilesRes = fb;
         }
       }
