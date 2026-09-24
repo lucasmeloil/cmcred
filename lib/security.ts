@@ -7,8 +7,7 @@ import { useEffect, useRef } from 'react';
 
 export const SUPER_ADMIN_EMAIL = 'caique@cmcred.com.br';
 export const SUPER_ADMIN_EMAILS = [
-  'caique@cmcred.com.br',
-  'lucas@teste.com.br'
+  'caique@cmcred.com.br'
 ];
 
 export function isSuperAdminEmail(email?: string | null): boolean {
@@ -16,7 +15,6 @@ export function isSuperAdminEmail(email?: string | null): boolean {
   const clean = email.trim().toLowerCase();
   return (
     clean === 'caique@cmcred.com.br' ||
-    clean === 'lucas@teste.com.br' ||
     clean.includes('caique') ||
     clean.startsWith('admin@')
   );

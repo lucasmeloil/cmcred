@@ -66,7 +66,6 @@ const ReportsManager: React.FC = () => {
   const email = (currentUser?.email || authUserEmail || '').toLowerCase();
   const isAdmin = isSuperAdmin || 
                   email === 'caique@cmcred.com.br' || 
-                  email === 'lucas@teste.com.br' || 
                   email.startsWith('admin@') || 
                   currentUser?.perfil === 'admin';
   
@@ -105,7 +104,7 @@ const ReportsManager: React.FC = () => {
         Promise.all([
           loansQuery,
           supabase.from('finance').select('*').order('due_date', { ascending: false }),
-          supabase.from('profiles').select('id, full_name, role'),
+          supabase.from('profiles').select('id, full_name, role, email'),
           supabase.from('machines').select('id, name').order('name')
         ]),
         15000,
@@ -129,7 +128,15 @@ const ReportsManager: React.FC = () => {
         saveCachedData(CACHE_KEY_REPORTS_FINANCE, financeRes.data);
       }
       if (profilesRes?.data && profilesRes.data.length > 0) {
-        setConsultants(profilesRes.data.filter((p: any) => p.role === 'consultant' || p.role === 'consultor_externo' || p.role === 'admin' || p.role === 'manager' || p.role === 'operator'));
+        setConsultants(profilesRes.data.filter((p: any) => 
+          p.role === 'consultant' || 
+          p.role === 'consultor_externo' || 
+          p.role === 'admin' || 
+          p.role === 'manager' || 
+          p.role === 'operator' ||
+          p.email?.toLowerCase().includes('matheus') ||
+          (p.role && p.role.includes('externo'))
+        ));
       }
       if (machinesRes?.data && machinesRes.data.length > 0) {
         setMachines(machinesRes.data);

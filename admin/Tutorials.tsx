@@ -68,7 +68,6 @@ export const Tutorials: React.FC<TutorialsProps> = ({ onNavigate }) => {
 
   const isAdmin = currentUser?.perfil === 'admin' || 
                   currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
-                  currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' ||
                   currentUser?.email?.toLowerCase().startsWith('admin@');
 
   const toggleTutorial = (id: string) => {

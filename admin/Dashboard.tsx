@@ -136,7 +136,6 @@ const Dashboard: React.FC = () => {
   const email = (currentUser?.email || authUserEmail || '').toLowerCase();
   const isAdmin = isSuperAdmin || 
                   email === 'caique@cmcred.com.br' || 
-                  email === 'lucas@teste.com.br' || 
                   email.startsWith('admin@') || 
                   currentUser?.perfil === 'admin';
   const isConsultant = !isAdmin && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'operator' || currentUser?.perfil === 'consultor_externo');

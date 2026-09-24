@@ -46,7 +46,6 @@ const Financeiro: React.FC = () => {
   
   const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
                        currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' || 
-                       currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' || 
                        currentUser?.perfil === 'admin' ||
                        currentUser?.perfil === 'manager';
 

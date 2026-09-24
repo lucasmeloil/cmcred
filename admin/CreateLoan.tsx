@@ -51,7 +51,6 @@ const CreateLoan: React.FC = () => {
   const { currentUser, addNotification, logAudit, isConsultant: authIsConsultant } = useAuth();
   const email = currentUser?.email?.toLowerCase() || '';
   const isAdmin = email === 'caique@cmcred.com.br' ||
-    email === 'lucas@teste.com.br' ||
     email.includes('caique') ||
     email.includes('admin') ||
     currentUser?.perfil === 'admin';
@@ -129,7 +128,7 @@ const CreateLoan: React.FC = () => {
         supabase.from('leads').select('*').order('name'),
         supabase.from('customers').select('*').order('name'),
         supabase.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name'),
-        supabase.from('profiles').select('*').in('role', ['consultant', 'consultor_externo', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name'),
+        supabase.from('profiles').select('*').order('full_name'),
         fetchCustomTablesFromDatabase()
       ]);
 
@@ -150,14 +149,13 @@ const CreateLoan: React.FC = () => {
           const fb = await supabaseAdmin.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name');
           if (fb.data && fb.data.length > 0) machinesRes = fb;
         }
-        // Para usuários com permissão de lançar por outros (ex: Evelin),
-        // SEMPRE busca todos os perfis via supabaseAdmin para contornar o RLS
-        // que normalmente só retorna o próprio perfil do usuário logado.
+        // Para usuários com permissão de lançar por outros (ex: Evelin) ou admin,
+        // busca todos os perfis via supabaseAdmin para contornar qualquer restrição de RLS
         const needsAdminProfiles = canLaunchForOthers ||
           !profilesRes.data ||
-          profilesRes.data.length === 0;
+          profilesRes.data.length <= 1;
         if (needsAdminProfiles) {
-          const fb = await supabaseAdmin.from('profiles').select('*').in('role', ['consultant', 'consultor_externo', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name');
+          const fb = await supabaseAdmin.from('profiles').select('*').order('full_name');
           if (fb.data && fb.data.length > 0) profilesRes = fb;
         }
       }
@@ -207,7 +205,18 @@ const CreateLoan: React.FC = () => {
           return prev;
         });
       }
-      if (profilesRes.data) setConsultants(profilesRes.data);
+      if (profilesRes.data && profilesRes.data.length > 0) {
+        const allowedRoles = ['consultant', 'consultor_externo', 'operator', 'manager', 'admin'];
+        const filtered = profilesRes.data.filter((p: any) => {
+          // Apenas exclui se estiver explicitamente inativo
+          if (p.status === 'inactive') return false;
+          // Matheus ou qualquer outro consultor cadastrado sempre incluído
+          if (p.email?.toLowerCase().includes('matheus')) return true;
+          const role = (p.role || '').toLowerCase();
+          return !role || allowedRoles.includes(role) || role.includes('externo') || role.includes('consult');
+        });
+        setConsultants(filtered.length > 0 ? filtered : profilesRes.data);
+      }
 
       const { flags: dbFlags } = await fetchRatesFromDatabase();
       if (dbFlags && dbFlags.length > 0) {
@@ -870,7 +879,7 @@ const CreateLoan: React.FC = () => {
               ) : (
                 consultants.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.full_name} ({c.role.toUpperCase()}) {isAdmin ? `— ${c.commission_percentage}% de Comissão` : ''}
+                    {c.full_name || c.email || 'Consultor'} ({((c.role || 'consultor').replace(/_/g, ' ')).toUpperCase()}) {isAdmin && c.commission_percentage != null ? `— ${c.commission_percentage}% de Comissão` : ''}
                   </option>
                 ))
               )}

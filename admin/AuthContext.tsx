@@ -118,7 +118,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const isSuperAdminFallback = fallbackEmail?.toLowerCase() === 'caique@cmcred.com.br' ||
-        fallbackEmail?.toLowerCase() === 'lucas@teste.com.br' ||
         fallbackEmail?.toLowerCase().includes('caique') ||
         fallbackEmail?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
         isSuperAdminEmail(fallbackEmail);
@@ -139,7 +138,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const email = data?.email || fallbackEmail || (currentUserRef.current?.email) || '';
       const isSuperAdmin = isSuperAdminFallback ||
         email.toLowerCase() === 'caique@cmcred.com.br' ||
-        email.toLowerCase() === 'lucas@teste.com.br' ||
         email.toLowerCase().includes('caique') ||
         email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
         isSuperAdminEmail(email) ||
@@ -167,12 +165,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       })();
 
-      const isLucas = email.toLowerCase().includes('lucas');
-      const isCaique = email.toLowerCase().includes('caique');
+      const isCaique = email.toLowerCase().includes('caique') || email.toLowerCase() === 'caique@cmcred.com.br';
 
       const userToSet: AdminUser = {
         id: userId,
-        nome: data?.full_name || (isLucas ? 'Lucas (Admin Geral)' : (isCaique ? 'Caique (Super Admin)' : (isSuperAdmin ? 'Administrador CM CRED' : email.split('@')[0]))),
+        nome: data?.full_name || (isCaique ? 'Caique (Admin Geral)' : (isSuperAdmin ? 'Administrador CM CRED' : email.split('@')[0])),
         email: email,
         perfil: (isSuperAdmin || isAdminUser) ? 'admin' : ((data?.role as any) || 'consultant'),
         status: isSuperAdmin ? 'active' : ((data?.status as any) || 'active'),
@@ -205,15 +202,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (fallbackEmail || currentUserRef.current?.email) {
         const targetEmail = fallbackEmail || currentUserRef.current?.email || '';
         const isSuperAdminFallback = targetEmail.toLowerCase() === 'caique@cmcred.com.br' ||
-          targetEmail.toLowerCase() === 'lucas@teste.com.br' ||
           targetEmail.toLowerCase().includes('caique') ||
           targetEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
           isSuperAdminEmail(targetEmail);
-        const isTargetLucas = targetEmail.toLowerCase().includes('lucas');
         const isTargetCaique = targetEmail.toLowerCase().includes('caique') || targetEmail.toLowerCase() === 'caique@cmcred.com.br';
         const fallbackUser: AdminUser = {
           id: userId,
-          nome: isTargetCaique ? 'Caique (Super Admin)' : (isTargetLucas ? 'Lucas (Admin Geral)' : (isSuperAdminFallback ? 'Administrador CM CRED' : targetEmail.split('@')[0])),
+          nome: isTargetCaique ? 'Caique (Admin Geral)' : (isSuperAdminFallback ? 'Administrador CM CRED' : targetEmail.split('@')[0]),
           email: targetEmail,
           perfil: isSuperAdminFallback ? 'admin' : 'consultant',
           status: 'active',
@@ -444,8 +439,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const isAdmin = currentUser?.perfil === 'admin' ||
                       currentUser?.email?.toLowerCase().includes('admin') ||
-                      currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
-                      currentUser?.email?.toLowerCase() === 'lucas@teste.com.br';
+                      currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br';
 
       if (event.type === 'LOAN_CREATED') {
         const valStr = event.data?.grossAmount 
@@ -503,7 +497,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const emailLower = (currentUser?.email || session?.user?.email || '').toLowerCase();
   const isSuperAdmin = emailLower === 'caique@cmcred.com.br' ||
-                       emailLower === 'lucas@teste.com.br' ||
                        emailLower.includes('caique') ||
                        emailLower.startsWith('admin@') ||
                        isSuperAdminEmail(emailLower) ||

@@ -60,7 +60,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { currentUser, authUserEmail } = useAuth();
   const isSuperAdmin = authUserEmail?.toLowerCase().startsWith('admin@') || 
                        currentUser?.email?.toLowerCase() === 'caique@cmcred.com.br' ||
-                       currentUser?.email?.toLowerCase() === 'lucas@teste.com.br' ||
                        currentUser?.perfil === 'admin';
 
   // Estados com inicialização instantânea a partir do cache local (zero delay ao alternar abas)

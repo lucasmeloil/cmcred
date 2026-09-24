@@ -50,18 +50,8 @@ const PERMISSION_DEFINITIONS: Array<{
 const DEFAULT_INITIAL_ADMINS: AdminUser[] = [
   {
     id: 'a0e73455-9526-4cdf-a0f5-7bf47e2e3ce8',
-    nome: 'Caique (Super Admin)',
+    nome: 'Caique (Admin Geral)',
     email: 'caique@cmcred.com.br',
-    perfil: 'admin',
-    status: 'active',
-    dataCriacao: new Date().toISOString(),
-    commission_percentage: 0,
-    permissions: ADMIN_PERMISSIONS
-  },
-  {
-    id: 'aa38eec1-3a64-4e17-ab16-401d032b81b3',
-    nome: 'Lucas (Admin Geral)',
-    email: 'lucas@teste.com.br',
     perfil: 'admin',
     status: 'active',
     dataCriacao: new Date().toISOString(),
@@ -82,7 +72,6 @@ const UsersManager: React.FC = () => {
   const { addNotification, logAudit, authUserEmail, showConfirm, currentUser } = useAuth();
   
   const isSuperAdmin = authUserEmail?.toLowerCase() === 'caique@cmcred.com.br' ||
-                       authUserEmail?.toLowerCase() === 'lucas@teste.com.br' ||
                        authUserEmail?.toLowerCase().includes('caique') ||
                        authUserEmail?.toLowerCase().includes('admin') ||
                        authUserEmail?.toLowerCase().includes('cmcred') ||
@@ -194,16 +183,15 @@ const UsersManager: React.FC = () => {
       let mappedUsers: AdminUser[] = [];
       if (data && data.length > 0) {
         mappedUsers = data.map(d => {
-          const isLucas = d.email?.toLowerCase() === 'lucas@teste.com.br' || d.email?.toLowerCase().includes('lucas');
           const isCaique = d.email?.toLowerCase() === 'caique@cmcred.com.br' || d.email?.toLowerCase().includes('caique');
-          const isSuperAdminAccount = isCaique || isLucas || isSuperAdminEmail(d.email);
+          const isSuperAdminAccount = isCaique || isSuperAdminEmail(d.email);
           const isAdminUser = isSuperAdminAccount || d.email?.toLowerCase().includes('admin') || d.role === 'admin';
           const role = isAdminUser ? 'admin' : (d.role as UserRole);
           const perms = isAdminUser || role === 'admin' ? ADMIN_PERMISSIONS : (d.permissions || DEFAULT_PERMISSIONS);
 
           return {
             id: d.id,
-            nome: d.full_name || (isLucas ? 'Lucas (Admin Geral)' : (isCaique ? 'Caique (Super Admin)' : (isAdminUser ? 'Administrador CM CRED' : 'Consultor'))),
+            nome: d.full_name || (isCaique ? 'Caique (Admin Geral)' : (isAdminUser ? 'Administrador CM CRED' : 'Consultor')),
             email: d.email || '',
             perfil: role,
             status: d.status as UserStatus,
@@ -214,26 +202,12 @@ const UsersManager: React.FC = () => {
         });
       }
 
-      // Garante que o Super Admin Caique sempre apareça na lista de acessos
+      // Garante que o Admin Geral Caique sempre apareça na lista de acessos
       if (!mappedUsers.some(u => u.email.toLowerCase() === 'caique@cmcred.com.br')) {
         mappedUsers.unshift({
           id: 'a0e73455-9526-4cdf-a0f5-7bf47e2e3ce8',
-          nome: 'Caique (Super Admin)',
+          nome: 'Caique (Admin Geral)',
           email: 'caique@cmcred.com.br',
-          perfil: 'admin',
-          status: 'active',
-          dataCriacao: new Date().toISOString(),
-          commission_percentage: 0,
-          permissions: ADMIN_PERMISSIONS
-        });
-      }
-
-      // Garante que o Admin Geral Lucas sempre apareça na lista de acessos
-      if (!mappedUsers.some(u => u.email.toLowerCase() === 'lucas@teste.com.br')) {
-        mappedUsers.splice(1, 0, {
-          id: 'aa38eec1-3a64-4e17-ab16-401d032b81b3',
-          nome: 'Lucas (Admin Geral)',
-          email: 'lucas@teste.com.br',
           perfil: 'admin',
           status: 'active',
           dataCriacao: new Date().toISOString(),
@@ -455,8 +429,8 @@ const UsersManager: React.FC = () => {
   const toggleStatus = async (id: string, current: UserStatus) => {
     const target = users.find(u => u.id === id);
     const targetEmail = target?.email?.toLowerCase() || '';
-    if (targetEmail === 'caique@cmcred.com.br' || targetEmail === 'lucas@teste.com.br') {
-      addNotification('Administradores Gerais não podem ser bloqueados por segurança.', 'alerta');
+    if (targetEmail === 'caique@cmcred.com.br') {
+      addNotification('O Administrador Geral não pode ser bloqueado por segurança.', 'alerta');
       return;
     }
 
@@ -471,8 +445,7 @@ const UsersManager: React.FC = () => {
     if (!editingUser) return;
     setLoading(true);
     try {
-      const isSuperAdminUser = editingUser.email.toLowerCase() === 'caique@cmcred.com.br' || 
-                               editingUser.email.toLowerCase() === 'lucas@teste.com.br';
+      const isSuperAdminUser = editingUser.email.toLowerCase() === 'caique@cmcred.com.br';
       const finalRole = isSuperAdminUser ? 'admin' : editingUser.perfil;
       
       // Sanitizar permissões para consultores e consultores externos
@@ -520,8 +493,8 @@ const UsersManager: React.FC = () => {
   const handleDeleteUser = async (id: string) => {
     const target = users.find(u => u.id === id);
     const targetEmail = target?.email?.toLowerCase() || '';
-    if (targetEmail === 'caique@cmcred.com.br' || targetEmail === 'lucas@teste.com.br') {
-      addNotification('Ação Bloqueada: Administradores Gerais possuem imunidade contra exclusão.', 'alerta');
+    if (targetEmail === 'caique@cmcred.com.br') {
+      addNotification('Ação Bloqueada: O Administrador Geral possui imunidade contra exclusão.', 'alerta');
       return;
     }
 
@@ -562,14 +535,17 @@ const UsersManager: React.FC = () => {
   };
 
   const tabFiltered = users
-    .filter(u => activeTab === 'all' || u.perfil === activeTab)
-    .filter(u => u.nome.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
+    .filter(u => {
+      if (activeTab === 'all') return true;
+      if (activeTab === 'consultant') return u.perfil === 'consultant' || u.perfil === 'consultor_externo';
+      return u.perfil === activeTab;
+    })
+    .filter(u => (u.nome || '').toLowerCase().includes(search.toLowerCase()) || (u.email || '').toLowerCase().includes(search.toLowerCase()));
 
   // Localiza o usuário admin autenticado para troca rápida de senha
   const currentAdminUser = users.find(u => 
     u.id === currentUser?.id || 
     u.email.toLowerCase() === (authUserEmail || '').toLowerCase() ||
-    u.email.toLowerCase() === 'lucas@teste.com.br' ||
     u.email.toLowerCase() === 'caique@cmcred.com.br'
   ) || users.find(u => u.perfil === 'admin') || null;
 
@@ -679,7 +655,7 @@ const UsersManager: React.FC = () => {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '1.75rem' }}>
           {tabFiltered.map(user => {
-            const isSuperAdminUser = user.email.toLowerCase() === 'caique@cmcred.com.br' || user.email.toLowerCase() === 'lucas@teste.com.br';
+            const isSuperAdminUser = user.email.toLowerCase() === 'caique@cmcred.com.br';
             const isAdminUser = isSuperAdminUser || user.email.toLowerCase().includes('admin') || user.perfil === 'admin';
             const isExternalConsultant = user.perfil === 'consultor_externo';
             const rc = isAdminUser ? roleConfig.admin : (roleConfig[user.perfil] || roleConfig.operator);
@@ -986,7 +962,7 @@ const UsersManager: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
               <div>
                 <label style={{ display: 'block', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>Nome Completo</label>
-                <input required style={inputStyle} placeholder="Ex: Lucas Melo" value={newUser.full_name} onChange={e => setNewUser({ ...newUser, full_name: e.target.value })} />
+                <input required style={inputStyle} placeholder="Ex: João Silva" value={newUser.full_name} onChange={e => setNewUser({ ...newUser, full_name: e.target.value })} />
               </div>
               <div>
                 <label style={{ display: 'block', color: '#475569', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', marginBottom: '0.4rem' }}>E-mail de Login</label>

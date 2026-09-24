@@ -51,7 +51,6 @@ const LoanRequests: React.FC = () => {
   const isAdmin = isSuperAdmin || 
                   email.startsWith('admin@') || 
                   email === 'caique@cmcred.com.br' || 
-                  email === 'lucas@teste.com.br' || 
                   currentUser?.perfil === 'admin';
 
   const [loans, setLoans] = useState<LoanRequest[]>(() => loadCachedData<LoanRequest[]>(CACHE_KEY_LOANS, []) || []);
