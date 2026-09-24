@@ -150,7 +150,13 @@ const CreateLoan: React.FC = () => {
           const fb = await supabaseAdmin.from('machines').select('id, name, fee_percentage, installment_fees, bank_id, liquidation_days').order('name');
           if (fb.data && fb.data.length > 0) machinesRes = fb;
         }
-        if (!profilesRes.data || profilesRes.data.length === 0) {
+        // Para usuários com permissão de lançar por outros (ex: Evelin),
+        // SEMPRE busca todos os perfis via supabaseAdmin para contornar o RLS
+        // que normalmente só retorna o próprio perfil do usuário logado.
+        const needsAdminProfiles = canLaunchForOthers ||
+          !profilesRes.data ||
+          profilesRes.data.length === 0;
+        if (needsAdminProfiles) {
           const fb = await supabaseAdmin.from('profiles').select('*').in('role', ['consultant', 'operator', 'manager', 'admin']).eq('status', 'active').order('full_name');
           if (fb.data && fb.data.length > 0) profilesRes = fb;
         }
@@ -218,8 +224,8 @@ const CreateLoan: React.FC = () => {
     fetchData();
 
     if (currentUser && ['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser.perfil)) {
-      // Evelin pode lançar por outros — não pré-seleciona ela mesma
-      if (!canLaunchForOthers || email === 'evelin@cmcred.com.br') {
+      // Evelin (canLaunchForOthers) não pré-seleciona ela mesma — deixa em branco para escolher
+      if (!canLaunchForOthers) {
         setFormData(prev => ({ ...prev, consultant_id: prev.consultant_id || currentUser.id }));
       }
     }
