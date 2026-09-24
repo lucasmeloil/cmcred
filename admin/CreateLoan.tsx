@@ -60,6 +60,10 @@ const CreateLoan: React.FC = () => {
     currentUser?.perfil === 'consultor_externo'
   ));
 
+  // Permissão especial: pode lançar empréstimos em nome de outros consultores
+  // (o consultant_id salvo será do consultor alvo; observations registra quem lançou)
+  const canLaunchForOthers = isAdmin || email === 'evelin@cmcred.com.br';
+
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -214,7 +218,10 @@ const CreateLoan: React.FC = () => {
     fetchData();
 
     if (currentUser && ['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser.perfil)) {
-      setFormData(prev => ({ ...prev, consultant_id: prev.consultant_id || currentUser.id }));
+      // Evelin pode lançar por outros — não pré-seleciona ela mesma
+      if (!canLaunchForOthers || email === 'evelin@cmcred.com.br') {
+        setFormData(prev => ({ ...prev, consultant_id: prev.consultant_id || currentUser.id }));
+      }
     }
 
     const handleRatesUpdate = () => {
@@ -402,6 +409,11 @@ const CreateLoan: React.FC = () => {
       const settlementDueDate = calculateSettlementDueDate(new Date(), liquidationDays);
       const machineNetBank = Number((safeGrossAmount - machineFeeAmount).toFixed(2));
 
+      // Registra nas observações quem lançou (quando é diferente do consultor responsável)
+      const launcherNote = canLaunchForOthers && !isAdmin && email === 'evelin@cmcred.com.br'
+        ? `[Lançado por: ${currentUser?.nome || 'Evelin'} | Responsável: ${selectedConsultant?.full_name || 'Consultor Externo'}] `
+        : '';
+
       const insertLoan = {
         lead_id: selectionType === 'lead' ? formData.lead_id : null,
         customer_id: selectionType === 'customer' ? formData.customer_id : null,
@@ -416,7 +428,7 @@ const CreateLoan: React.FC = () => {
         machine_fee_percentage: machFeePercent,
         machine_fee_amount: machineFeeAmount,
         net_bank_amount: machineNetBank,
-        observations: `${formData.observations ? formData.observations + ' | ' : ''}Maquininha: ${machineLabel} (Retenção ${machFeePercent.toFixed(2)}% = R$ ${machineFeeAmount.toFixed(2)}) | Prazo: D+${liquidationDays} | Bandeira: ${formData.card_flag_id} | Canal: ${formData.channel} | PIX: ${formData.pix_key || 'Não informado'} | Final Cartão: ${formData.card_last_digits || 'N/A'}`,
+        observations: `${launcherNote}${formData.observations ? formData.observations + ' | ' : ''}Maquininha: ${machineLabel} (Retenção ${machFeePercent.toFixed(2)}% = R$ ${machineFeeAmount.toFixed(2)}) | Prazo: D+${liquidationDays} | Bandeira: ${formData.card_flag_id} | Canal: ${formData.channel} | PIX: ${formData.pix_key || 'Não informado'} | Final Cartão: ${formData.card_last_digits || 'N/A'}`,
         profit: operationProfit,
         consultant_commission_amount: consultantCommission,
         company_net_profit: companyNetProfit,
@@ -801,16 +813,53 @@ const CreateLoan: React.FC = () => {
           {/* Operador / Consultor */}
           <div>
             <label style={labelStyle}><UserCheck size={15} color="#d97706" /> Operador / Consultor Responsável</label>
+
+            {/* Banner informativo para Evelin: lançando em nome de outro consultor */}
+            {canLaunchForOthers && !isAdmin && (
+              <div style={{
+                background: 'linear-gradient(135deg, #fef3c7 0%, #fef9ec 100%)',
+                border: '1.5px solid #fbbf24',
+                borderRadius: '12px',
+                padding: '0.65rem 1rem',
+                marginBottom: '0.6rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.82rem',
+                fontWeight: 700,
+                color: '#92400e'
+              }}>
+                <UserCheck size={14} color="#d97706" />
+                <span>
+                  <strong>Permissão Especial:</strong> Você pode lançar este empréstimo em nome de outro consultor.
+                  O registro ficará vinculado ao consultor selecionado e as observações registrarão que <strong>você lançou</strong>.
+                </span>
+              </div>
+            )}
+
             <select
-              style={{ ...inputStyle, background: (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo') ? '#f8fafc' : '#ffffff', height: '50px' }}
+              style={{
+                ...inputStyle,
+                background: (!canLaunchForOthers && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo')) ? '#f8fafc' : '#ffffff',
+                height: '50px'
+              }}
               value={formData.consultant_id || ''}
               onChange={e => setFormData({ ...formData, consultant_id: e.target.value || null })}
-              disabled={currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo'}
+              disabled={!canLaunchForOthers && (currentUser?.perfil === 'consultant' || currentUser?.perfil === 'consultor_externo')}
             >
-              {!['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') && (
+              {!['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') && !canLaunchForOthers && (
                 <option value="">Operação Direta da Empresa (Sem Consultor)</option>
               )}
-              {['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') ? (
+              {/* Admins: opção de sem consultor */}
+              {isAdmin && (
+                <option value="">Operação Direta da Empresa (Sem Consultor)</option>
+              )}
+              {/* Evelin: opção de sem consultor + lista completa */}
+              {canLaunchForOthers && !isAdmin && (
+                <option value="">— Selecione o Consultor Responsável —</option>
+              )}
+              {/* Consultores comuns: apenas eles mesmos */}
+              {(!canLaunchForOthers) && ['consultant', 'consultor_externo', 'operator', 'manager'].includes(currentUser?.perfil || '') ? (
                 <option value={currentUser?.id}>{currentUser?.nome} (Sua Operação)</option>
               ) : (
                 consultants.map(c => (
@@ -820,6 +869,29 @@ const CreateLoan: React.FC = () => {
                 ))
               )}
             </select>
+
+            {/* Confirmação visual do consultor selecionado para Evelin */}
+            {canLaunchForOthers && !isAdmin && formData.consultant_id && (() => {
+              const chosen = consultants.find(c => c.id === formData.consultant_id);
+              return chosen ? (
+                <div style={{
+                  marginTop: '0.5rem',
+                  padding: '0.5rem 0.9rem',
+                  background: '#f0fdf4',
+                  border: '1.5px solid #bbf7d0',
+                  borderRadius: '10px',
+                  fontSize: '0.82rem',
+                  color: '#166534',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem'
+                }}>
+                  ✅ Empréstimo será registrado em nome de: <strong>{chosen.full_name}</strong>
+                  <span style={{ color: '#64748b', fontWeight: 500 }}>(lançado por você)</span>
+                </div>
+              ) : null;
+            })()}
           </div>
 
           {/* Valor Desejado */}

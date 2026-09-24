@@ -746,6 +746,41 @@ const LoanRequests: React.FC = () => {
                </div>
             </div>
 
+            {/* Banner: Lançado em nome de outro consultor (visível para admin) */}
+            {(() => {
+              const obs = (selected as any).observations || '';
+              const launcherMatch = obs.match(/\[Lan[çc]ado por: ([^\|]+) \| Respons[áa]vel: ([^\]]+)\]/);
+              const consultantName = (selected as any).consultant_name;
+              if (!launcherMatch && !consultantName) return null;
+              return (
+                <div style={{
+                  background: 'linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%)',
+                  border: '1.5px solid #fbbf24',
+                  borderRadius: '16px',
+                  padding: '0.9rem 1.25rem',
+                  marginBottom: '1.25rem',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '0.75rem'
+                }}>
+                  <User size={18} color="#d97706" style={{ marginTop: '2px', flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 900, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.3rem' }}>
+                      Consultor Responsável pela Operação
+                    </div>
+                    <div style={{ fontSize: '1rem', fontWeight: 900, color: '#0f172a' }}>
+                      {consultantName || launcherMatch?.[2] || 'Consultor'}
+                    </div>
+                    {launcherMatch && (
+                      <div style={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 700, marginTop: '0.2rem' }}>
+                        📋 Lançado fisicamente por: <strong>{launcherMatch[1].trim()}</strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             {isAdmin && (() => {
               const selectedFin = calculateLoanFinancials(selected);
               return (

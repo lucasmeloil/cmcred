@@ -1193,8 +1193,13 @@ const RatesSettingsManager: React.FC = () => {
                       type="number"
                       step="0.01"
                       min="0"
-                      value={newTableForm.minTaxa}
-                      onChange={e => setNewTableForm(prev => ({ ...prev, minTaxa: parseFloat(e.target.value) || 0 }))}
+                      value={newTableForm.minTaxa === 0 ? '' : newTableForm.minTaxa}
+                      placeholder="0,00"
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const parsed = parseFloat(raw);
+                        setNewTableForm(prev => ({ ...prev, minTaxa: raw === '' ? 0 : (isNaN(parsed) ? prev.minTaxa : parsed) }));
+                      }}
                       style={{ ...inputRateStyle, textAlign: 'center', padding: '0.65rem', fontWeight: 800 }}
                     />
                   </div>
@@ -1204,8 +1209,13 @@ const RatesSettingsManager: React.FC = () => {
                       type="number"
                       step="0.01"
                       min="0"
-                      value={newTableForm.maxTaxa}
-                      onChange={e => setNewTableForm(prev => ({ ...prev, maxTaxa: parseFloat(e.target.value) || 0 }))}
+                      value={newTableForm.maxTaxa === 0 ? '' : newTableForm.maxTaxa}
+                      placeholder="0,00"
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const parsed = parseFloat(raw);
+                        setNewTableForm(prev => ({ ...prev, maxTaxa: raw === '' ? 0 : (isNaN(parsed) ? prev.maxTaxa : parsed) }));
+                      }}
                       style={{ ...inputRateStyle, textAlign: 'center', padding: '0.65rem', fontWeight: 800 }}
                     />
                   </div>
@@ -1295,8 +1305,15 @@ const RatesSettingsManager: React.FC = () => {
                         <input
                           type="number"
                           step="0.01"
-                          value={currentVal}
-                          onChange={e => handleRateChangeInNewTable(installment, parseFloat(e.target.value) || 0)}
+                          min="0"
+                          value={currentVal === 0 ? '' : currentVal}
+                          placeholder="0,00"
+                          onChange={e => {
+                            const raw = e.target.value;
+                            const parsed = parseFloat(raw);
+                            // Permite apagar o campo por completo sem forçar 0 durante digitação
+                            handleRateChangeInNewTable(installment, raw === '' ? 0 : (isNaN(parsed) ? 0 : Math.max(0, parsed)));
+                          }}
                           style={{
                             width: '100%',
                             border: 'none',
