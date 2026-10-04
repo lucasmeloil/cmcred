@@ -40,7 +40,8 @@ import {
   TABLE_OPTIONS,
   fetchCustomTablesFromDatabase,
   getMemoryCustomTables,
-  type NovaTabelaTaxasResultado
+  type NovaTabelaTaxasResultado,
+  getFlagRateKey
 } from '../lib/rates';
 import { useRealtimeSync } from '../lib/useRealtimeSync';
 import { RealtimeStatusBadge } from './RealtimeStatusBadge';
@@ -241,7 +242,7 @@ const CreateLoan: React.FC = () => {
 
     const handleRatesUpdate = () => {
       setFlags(getCustomCardFlags());
-      const updatedRate = getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType);
+      const updatedRate = getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType, customTables);
       setFormData(prev => ({ ...prev, interest_rate: updatedRate }));
     };
     window.addEventListener('cmcred_rates_updated', handleRatesUpdate);
@@ -286,6 +287,36 @@ const CreateLoan: React.FC = () => {
     }));
     return [...base, ...custom];
   }, [customTables]);
+
+  // Seletor dinâmico de bandeiras caso a tabela seja personalizada (ex: Delivery)
+  const currentCustomTable = useMemo(() => {
+    if (rateTableType !== 'tabela_1' && rateTableType !== 'tabela_2') {
+      return customTables.find(t => t.id === rateTableType || t.nomeTabela.toLowerCase() === String(rateTableType).toLowerCase());
+    }
+    return null;
+  }, [rateTableType, customTables]);
+
+  const displayFlags = useMemo(() => {
+    if (currentCustomTable && currentCustomTable.bandeiras && currentCustomTable.bandeiras.length > 0) {
+      return currentCustomTable.bandeiras.map(bName => {
+        const matched = flags.find(f => f.key === bName || f.name.toUpperCase() === bName.toUpperCase() || getFlagRateKey(f.key) === getFlagRateKey(bName));
+        return {
+          id: bName.toLowerCase(),
+          key: bName,
+          name: bName,
+          icon: matched?.icon || '💳',
+          color: matched?.color || '#6366f1'
+        };
+      });
+    }
+    return flags;
+  }, [currentCustomTable, flags]);
+
+  useEffect(() => {
+    if (displayFlags.length > 0 && !displayFlags.some(f => f.key === formData.card_flag_id)) {
+      setFormData(prev => ({ ...prev, card_flag_id: displayFlags[0].key }));
+    }
+  }, [displayFlags, formData.card_flag_id]);
 
   // Atualizar dados de PIX e cliente ao selecionar cliente existente
   const handleSelectCustomer = (customerId: string) => {
@@ -939,9 +970,9 @@ const CreateLoan: React.FC = () => {
               onChange={e => setFormData({ ...formData, card_flag_id: e.target.value })}
               required
             >
-              {flags.map(f => (
+              {displayFlags.map(f => (
                 <option key={f.key} value={f.key}>
-                  {f.name} {isAdmin ? `(Taxa ${formData.installments}x: ${getRateForFlagAndInstallment(f.key, formData.installments, rateTableType)}%)` : ''}
+                  {f.name} {isAdmin ? `(Taxa ${formData.installments}x: ${getRateForFlagAndInstallment(f.key, formData.installments, rateTableType, customTables)}%)` : ''}
                 </option>
               ))}
             </select>
@@ -1008,7 +1039,7 @@ const CreateLoan: React.FC = () => {
                 <CalendarDays size={16} color="#d97706" /> Quantidade de Vezes Solicitada pelo Cliente (1 a 18x):
               </label>
               <div style={{ background: '#d97706', color: '#fff', padding: '0.35rem 0.9rem', borderRadius: '10px', fontWeight: 900, fontSize: '0.9rem' }}>
-                Selecionado: {formData.installments}x {isAdmin ? `(Taxa: ${getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType)}%)` : ''}
+                Selecionado: {formData.installments}x {isAdmin ? `(Taxa: ${getRateForFlagAndInstallment(formData.card_flag_id, formData.installments, rateTableType, customTables)}%)` : ''}
               </div>
             </div>
 
@@ -1016,7 +1047,7 @@ const CreateLoan: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(85px, 1fr))', gap: '0.5rem' }}>
               {Array.from({ length: 18 }, (_, i) => i + 1).map(n => {
                 const isSelected = formData.installments === n;
-                const r = getRateForFlagAndInstallment(formData.card_flag_id, n, rateTableType);
+                const r = getRateForFlagAndInstallment(formData.card_flag_id, n, rateTableType, customTables);
                 return (
                   <button
                     key={n}

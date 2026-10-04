@@ -32,7 +32,8 @@ import {
   type CardFlagOption,
   type RateTableType,
   type NovaTabelaTaxasResultado,
-  TABLE_OPTIONS
+  TABLE_OPTIONS,
+  getFlagRateKey
 } from '../lib/rates';
 
 import { loadCachedData, saveCachedData } from '../lib/dataCache';
@@ -145,6 +146,36 @@ const Simulator: React.FC = () => {
     return [...base, ...custom];
   }, [customTables, isAdmin]);
 
+  // Seletor dinâmico de bandeiras caso seja tabela personalizada
+  const currentCustomTable = useMemo(() => {
+    if (tabelaTaxa !== 'tabela_1' && tabelaTaxa !== 'tabela_2') {
+      return customTables.find(t => t.id === tabelaTaxa || t.nomeTabela.toLowerCase() === String(tabelaTaxa).toLowerCase());
+    }
+    return null;
+  }, [tabelaTaxa, customTables]);
+
+  const displayFlags = useMemo(() => {
+    if (currentCustomTable && currentCustomTable.bandeiras && currentCustomTable.bandeiras.length > 0) {
+      return currentCustomTable.bandeiras.map(bName => {
+        const matched = flags.find(f => f.key === bName || f.name.toUpperCase() === bName.toUpperCase() || getFlagRateKey(f.key) === getFlagRateKey(bName));
+        return {
+          id: bName.toLowerCase(),
+          key: bName,
+          name: bName,
+          icon: matched?.icon || '💳',
+          color: matched?.color || '#d97706'
+        };
+      });
+    }
+    return flags;
+  }, [currentCustomTable, flags]);
+
+  useEffect(() => {
+    if (displayFlags.length > 0 && !displayFlags.some(f => f.key === bandeiraCartao)) {
+      setBandeiraCartao(displayFlags[0].key);
+    }
+  }, [displayFlags, bandeiraCartao]);
+
   // Cálculo em tempo real usando a fórmula e taxas oficiais do HTML
   const simulation = useMemo(() => {
     return calculateLoanSimulation({
@@ -179,7 +210,7 @@ const Simulator: React.FC = () => {
     });
   }, [valorDesejado, tipoCalculo, bandeiraCartao, tabelaTaxa, customTables, ratesVersion]);
 
-  const selectedFlagObj = flags.find(f => f.key === bandeiraCartao) || flags[0] || { name: 'VISA / MASTER' };
+  const selectedFlagObj = displayFlags.find(f => f.key === bandeiraCartao) || displayFlags[0] || { name: 'VISA / MASTER' };
 
   const getSimMessage = () => {
     return buildWhatsAppSimulationMessage({
@@ -509,9 +540,9 @@ const Simulator: React.FC = () => {
               <CreditCard size={16} color="#d97706" /> Bandeira do Cartão:
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
-              {flags.map(flag => {
+              {displayFlags.map(flag => {
                 const isSelected = bandeiraCartao === flag.key;
-                const currentFee = getRateForFlagAndInstallment(flag.key, parcelas, tabelaTaxa);
+                const currentFee = getRateForFlagAndInstallment(flag.key, parcelas, tabelaTaxa, customTables);
                 return (
                   <button
                     key={flag.key}
@@ -746,7 +777,7 @@ const Simulator: React.FC = () => {
       {/* Tabela Completa de Parcelas (1x a 18x) */}
       <div style={{ marginTop: '3rem', ...cardStyle }}>
         <h3 style={{ margin: '0 0 1.5rem 0', color: '#0f172a', fontWeight: 800, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <TrendingUp size={20} color="#d97706" /> Tabela Comparativa de Parcelamento (1x a 18x) — {flags.find(f => f.key === bandeiraCartao)?.name}
+          <TrendingUp size={20} color="#d97706" /> Tabela Comparativa de Parcelamento (1x a 18x) — {displayFlags.find(f => f.key === bandeiraCartao)?.name || bandeiraCartao}
         </h3>
 
         <div style={{ overflowX: 'auto' }}>

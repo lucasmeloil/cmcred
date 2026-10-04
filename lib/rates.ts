@@ -631,25 +631,45 @@ export function getRateForFlagAndInstallment(
       const rates = target.taxasPorParcelas;
       const normKey = getFlagRateKey(flagKey);
 
-      // 1. Se tiver estrutura por bandeira (ex: { VISA_MASTER: { 1: 7.1 } })
-      if ((rates as any)[normKey] && typeof (rates as any)[normKey] === 'object') {
-        const flagObj = (rates as any)[normKey];
-        const val = flagObj[installment] ?? flagObj[String(installment)];
-        if (val !== undefined && val !== null) return Number(val);
-      }
+      // 1. Chave exata informada (ex: "VISA", "MASTER", "ELO", "HIPERCARD")
       if ((rates as any)[flagKey] && typeof (rates as any)[flagKey] === 'object') {
         const flagObj = (rates as any)[flagKey];
         const val = flagObj[installment] ?? flagObj[String(installment)];
         if (val !== undefined && val !== null) return Number(val);
       }
-      // 2. Se for estrutura plana direta (ex: { 1: 7.1, 2: 8.25 })
+      // 2. Chave normalizada clássica (ex: "VISA_MASTER", "BANESE/ELO", "AMEX")
+      if ((rates as any)[normKey] && typeof (rates as any)[normKey] === 'object') {
+        const flagObj = (rates as any)[normKey];
+        const val = flagObj[installment] ?? flagObj[String(installment)];
+        if (val !== undefined && val !== null) return Number(val);
+      }
+      // 3. Busca inteligente por correspondência de nome (case-insensitive e sem caracteres especiais)
+      const cleanTarget = String(flagKey).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const cleanNorm = String(normKey).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      for (const [k, v] of Object.entries(rates)) {
+        if (typeof v === 'object' && v !== null) {
+          const cleanK = k.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (
+            cleanK === cleanTarget ||
+            cleanK === cleanNorm ||
+            (cleanTarget.length >= 3 && cleanK.includes(cleanTarget)) ||
+            (cleanK.length >= 3 && cleanTarget.includes(cleanK)) ||
+            (cleanNorm.length >= 3 && cleanK.includes(cleanNorm)) ||
+            (cleanK.length >= 3 && cleanNorm.includes(cleanK))
+          ) {
+            const val = (v as any)[installment] ?? (v as any)[String(installment)];
+            if (val !== undefined && val !== null) return Number(val);
+          }
+        }
+      }
+      // 4. Estrutura plana direta legada (ex: { 1: 7.1, 2: 8.25 })
       const flatVal = (rates as any)[installment] ?? (rates as any)[String(installment)];
       if (flatVal !== undefined && flatVal !== null) {
         return Number(flatVal);
       }
-      // 3. Fallback no primeiro objeto de bandeira se houver
-      const firstVal = Object.values(rates)[0];
-      if (typeof firstVal === 'object' && firstVal !== null) {
+      // 5. Fallback: primeira bandeira cadastrada na tabela
+      const firstVal = Object.values(rates).find(v => typeof v === 'object' && v !== null);
+      if (firstVal) {
         const val = (firstVal as any)[installment] ?? (firstVal as any)[String(installment)];
         if (val !== undefined && val !== null) return Number(val);
       }
@@ -1209,10 +1229,25 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
   }
 
   // Sanitização e validação das taxas em relação à faixa definida
+  // Para aceitar taxas de 19.99% ou superiores sem bloqueios rígidos, a faixa se expande automaticamente
+  let effectiveMin = typeof faixaTaxas?.min === 'number' ? faixaTaxas.min : 0;
+  let effectiveMax = typeof faixaTaxas?.max === 'number' ? faixaTaxas.max : 25;
+
   const normalizedTaxasPorParcelas: any = {};
   const isNestedByFlag = Object.keys(taxasPorParcelas).some(k => isNaN(Number(k)));
 
   if (isNestedByFlag) {
+    // 1. Detecta min e max para expandir a faixa se o CEO informou taxas maiores que a faixa
+    for (const flagRates of Object.values(taxasPorParcelas as Record<string, Record<number | string, number>>)) {
+      for (const rate of Object.values(flagRates || {})) {
+        const numRate = Number(rate);
+        if (!isNaN(numRate)) {
+          if (numRate > effectiveMax) effectiveMax = Number(numRate.toFixed(2));
+          if (numRate < effectiveMin && numRate >= 0) effectiveMin = Number(numRate.toFixed(2));
+        }
+      }
+    }
+
     for (const [flag, flagRates] of Object.entries(taxasPorParcelas as Record<string, Record<number | string, number>>)) {
       normalizedTaxasPorParcelas[flag] = {};
       for (const [pStr, rate] of Object.entries(flagRates || {})) {
@@ -1221,21 +1256,23 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
         if (isNaN(numRate)) {
           throw new Error(`Taxa inválida informada para a parcela ${pStr} na bandeira ${flag}.`);
         }
-        if (numRate < faixaTaxas.min || numRate > faixaTaxas.max) {
-          throw new Error(`A taxa de ${numRate}% (parcela ${p}x na bandeira ${flag}) está fora da faixa permitida (${faixaTaxas.min}% a ${faixaTaxas.max}%).`);
-        }
         normalizedTaxasPorParcelas[flag][p] = Number(numRate.toFixed(2));
       }
     }
   } else {
+    for (const rate of Object.values(taxasPorParcelas as Record<number | string, number>)) {
+      const numRate = Number(rate);
+      if (!isNaN(numRate)) {
+        if (numRate > effectiveMax) effectiveMax = Number(numRate.toFixed(2));
+        if (numRate < effectiveMin && numRate >= 0) effectiveMin = Number(numRate.toFixed(2));
+      }
+    }
+
     for (const [pStr, rate] of Object.entries(taxasPorParcelas as Record<number | string, number>)) {
       const p = Number(pStr);
       const numRate = Number(rate);
       if (isNaN(numRate)) {
         throw new Error(`Taxa inválida informada para a parcela ${pStr}.`);
-      }
-      if (numRate < faixaTaxas.min || numRate > faixaTaxas.max) {
-        throw new Error(`A taxa de ${numRate}% para ${p}x está fora da faixa permitida (${faixaTaxas.min}% a ${faixaTaxas.max}%).`);
       }
       normalizedTaxasPorParcelas[p] = Number(numRate.toFixed(2));
     }
@@ -1251,8 +1288,8 @@ export function criarNovaTabelaTaxas(params: CriarNovaTabelaTaxasParams): NovaTa
     nomeTabela: nomeTabela.trim(),
     tipoTabela: tipoTabela.trim(),
     faixaTaxas: {
-      min: Number(faixaTaxas.min.toFixed(2)),
-      max: Number(faixaTaxas.max.toFixed(2))
+      min: Number(effectiveMin.toFixed(2)),
+      max: Number(effectiveMax.toFixed(2))
     },
     bandeiras: Array.from(new Set(bandeiras.map(b => b.trim().toUpperCase()))),
     taxasPorParcelas: normalizedTaxasPorParcelas,

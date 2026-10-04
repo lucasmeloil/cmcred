@@ -73,18 +73,27 @@ const RatesSettingsManager: React.FC = () => {
   const [editingTableId, setEditingTableId] = useState<string | null>(null);
   const [customTables, setCustomTables] = useState<NovaTabelaTaxasResultado[]>([]);
 
+  const DEFAULT_PARCELAS_RATES: Record<number, number> = {
+    1: 7.10, 2: 8.25, 3: 8.75, 4: 9.50, 5: 9.99, 6: 10.75,
+    7: 11.25, 8: 11.75, 9: 12.25, 10: 12.99, 11: 13.75, 12: 14.49,
+    13: 15.50, 14: 16.00, 15: 16.80, 16: 17.50, 17: 18.00, 18: 19.99
+  };
+
   const [newTableForm, setNewTableForm] = useState({
     nomeTabela: '',
     tipoTabela: 'Flex',
-    minTaxa: 5.5,
-    maxTaxa: 18.5,
-    bandeiras: ['VISA', 'MASTER', 'AMEX', 'ELO'],
+    minTaxa: 5.0,
+    maxTaxa: 25.0,
+    bandeiras: ['MASTER / VISA', 'BANESE / ELO', 'AMERICAN EXPRESS'],
+    activeModalFlag: 'MASTER / VISA',
     newFlagName: '',
-    taxasPorParcelas: {
-      1: 7.10, 2: 8.25, 3: 8.75, 4: 9.50, 5: 9.99, 6: 10.75,
-      7: 11.25, 8: 11.75, 9: 12.25, 10: 12.99, 11: 13.75, 12: 14.49,
-      13: 15.50, 14: 16.00, 15: 16.80, 16: 17.50, 17: 18.00, 18: 18.50
-    } as Record<number, number>,
+    renamingFlag: null as string | null,
+    renameValue: '',
+    taxasPorBandeira: {
+      'MASTER / VISA': { ...DEFAULT_PARCELAS_RATES },
+      'BANESE / ELO': { ...DEFAULT_PARCELAS_RATES },
+      'AMERICAN EXPRESS': { ...DEFAULT_PARCELAS_RATES }
+    } as Record<string, Record<number, number>>,
     simGrossAmount: 1000,
     simInstallment: 10
   });
@@ -343,7 +352,7 @@ const RatesSettingsManager: React.FC = () => {
     }
   };
 
-  // Adicionar nova bandeira dinamicamente à nova tabela
+  // Adicionar nova bandeira dinamicamente à tabela
   const handleAddFlagToNewTable = () => {
     if (!newTableForm.newFlagName.trim()) return;
     const clean = newTableForm.newFlagName.trim().toUpperCase();
@@ -351,49 +360,121 @@ const RatesSettingsManager: React.FC = () => {
       addNotification('Esta bandeira já consta na lista da tabela.', 'alerta');
       return;
     }
+    const active = newTableForm.activeModalFlag || newTableForm.bandeiras[0];
+    const sourceRates = newTableForm.taxasPorBandeira[active] || DEFAULT_PARCELAS_RATES;
+
     setNewTableForm(prev => ({
       ...prev,
       bandeiras: [...prev.bandeiras, clean],
-      newFlagName: ''
+      activeModalFlag: clean,
+      newFlagName: '',
+      taxasPorBandeira: {
+        ...prev.taxasPorBandeira,
+        [clean]: { ...sourceRates }
+      }
     }));
-    addNotification(`Bandeira ${clean} adicionada!`, 'sucesso');
+    addNotification(`Bandeira ${clean} adicionada! Você já pode editar suas taxas específicas.`, 'sucesso');
   };
 
+  // Remover bandeira da tabela
   const handleRemoveFlagFromNewTable = (flagToRemove: string) => {
     if (newTableForm.bandeiras.length <= 1) {
       addNotification('A tabela deve conter ao menos uma bandeira.', 'alerta');
       return;
     }
+    setNewTableForm(prev => {
+      const remainingFlags = prev.bandeiras.filter(b => b !== flagToRemove);
+      const newRates = { ...prev.taxasPorBandeira };
+      delete newRates[flagToRemove];
+      return {
+        ...prev,
+        bandeiras: remainingFlags,
+        activeModalFlag: prev.activeModalFlag === flagToRemove ? remainingFlags[0] : prev.activeModalFlag,
+        taxasPorBandeira: newRates
+      };
+    });
+  };
+
+  // Iniciar e confirmar renomeação de bandeira
+  const handleStartRenameFlag = (flagName: string) => {
     setNewTableForm(prev => ({
       ...prev,
-      bandeiras: prev.bandeiras.filter(b => b !== flagToRemove)
+      renamingFlag: flagName,
+      renameValue: flagName
     }));
   };
 
-  const handleRateChangeInNewTable = (installment: number, val: number) => {
-    setNewTableForm(prev => ({
-      ...prev,
-      taxasPorParcelas: {
-        ...prev.taxasPorParcelas,
-        [installment]: val
+  const handleConfirmRenameFlag = (oldFlagName: string) => {
+    const clean = newTableForm.renameValue.trim().toUpperCase();
+    if (!clean) {
+      addNotification('O nome da bandeira não pode ser vazio.', 'alerta');
+      return;
+    }
+    if (clean === oldFlagName) {
+      setNewTableForm(prev => ({ ...prev, renamingFlag: null, renameValue: '' }));
+      return;
+    }
+    if (newTableForm.bandeiras.includes(clean)) {
+      addNotification(`A bandeira "${clean}" já existe nesta tabela.`, 'alerta');
+      return;
+    }
+
+    setNewTableForm(prev => {
+      const updatedBandeiras = prev.bandeiras.map(b => b === oldFlagName ? clean : b);
+      const updatedRates = { ...prev.taxasPorBandeira };
+      if (updatedRates[oldFlagName]) {
+        updatedRates[clean] = updatedRates[oldFlagName];
+        delete updatedRates[oldFlagName];
       }
-    }));
+      return {
+        ...prev,
+        bandeiras: updatedBandeiras,
+        activeModalFlag: prev.activeModalFlag === oldFlagName ? clean : prev.activeModalFlag,
+        renamingFlag: null,
+        renameValue: '',
+        taxasPorBandeira: updatedRates
+      };
+    });
+    addNotification(`Bandeira renomeada para "${clean}" com sucesso!`, 'sucesso');
+  };
+
+  // Alterar taxa da bandeira ativa
+  const handleRateChangeInNewTable = (installment: number, val: number) => {
+    setNewTableForm(prev => {
+      const activeFlag = prev.activeModalFlag || prev.bandeiras[0] || 'VISA';
+      const currentFlagRates = prev.taxasPorBandeira[activeFlag] || { ...DEFAULT_PARCELAS_RATES };
+      const newRates = { ...currentFlagRates, [installment]: val };
+      // Expande automaticamente a faixa máxima para não travar taxas maiores (ex: 19.99% ou superiores)
+      const autoMax = val > prev.maxTaxa ? Math.max(prev.maxTaxa, Math.ceil(val * 10) / 10) : prev.maxTaxa;
+      return {
+        ...prev,
+        maxTaxa: autoMax,
+        taxasPorBandeira: {
+          ...prev.taxasPorBandeira,
+          [activeFlag]: newRates
+        }
+      };
+    });
   };
 
   const handleOpenCreateModal = () => {
     setEditingTableId(null);
+    const initialFlags = ['MASTER / VISA', 'BANESE / ELO', 'AMERICAN EXPRESS'];
+    const initialRates: Record<string, Record<number, number>> = {};
+    initialFlags.forEach(f => {
+      initialRates[f] = { ...DEFAULT_PARCELAS_RATES };
+    });
     setNewTableForm({
       nomeTabela: '',
       tipoTabela: 'Flex',
-      minTaxa: 5.5,
-      maxTaxa: 18.5,
-      bandeiras: ['VISA', 'MASTER', 'AMEX', 'ELO'],
+      minTaxa: 5.0,
+      maxTaxa: 25.0,
+      bandeiras: initialFlags,
+      activeModalFlag: 'MASTER / VISA',
       newFlagName: '',
-      taxasPorParcelas: {
-        1: 7.10, 2: 8.25, 3: 8.75, 4: 9.50, 5: 9.99, 6: 10.75,
-        7: 11.25, 8: 11.75, 9: 12.25, 10: 12.99, 11: 13.75, 12: 14.49,
-        13: 15.50, 14: 16.00, 15: 16.80, 16: 17.50, 17: 18.00, 18: 18.50
-      },
+      renamingFlag: null,
+      renameValue: '',
+      taxasPorBandeira: initialRates,
       simGrossAmount: 1000,
       simInstallment: 10
     });
@@ -403,24 +484,54 @@ const RatesSettingsManager: React.FC = () => {
   const handleOpenEditModal = (tabela: NovaTabelaTaxasResultado) => {
     setEditingTableId(tabela.id);
 
-    let flatRates: Record<number, number> = {};
-    if (tabela.taxasPorParcelas) {
-      const firstVal = Object.values(tabela.taxasPorParcelas)[0];
-      if (typeof firstVal === 'object' && firstVal !== null) {
-        flatRates = firstVal as Record<number, number>;
-      } else {
-        flatRates = tabela.taxasPorParcelas as Record<number, number>;
+    const flagsList = Array.isArray(tabela.bandeiras) && tabela.bandeiras.length > 0
+      ? [...tabela.bandeiras]
+      : ['MASTER / VISA', 'BANESE / ELO', 'AMERICAN EXPRESS'];
+
+    const ratesByFlag: Record<string, Record<number, number>> = {};
+    const rawRates = tabela.taxasPorParcelas || {};
+    const isNested = Object.keys(rawRates).some(k => isNaN(Number(k)));
+
+    if (isNested) {
+      for (const flag of flagsList) {
+        if ((rawRates as any)[flag] && typeof (rawRates as any)[flag] === 'object') {
+          ratesByFlag[flag] = { ...(rawRates as any)[flag] };
+        } else {
+          const foundKey = Object.keys(rawRates).find(k => k.trim().toUpperCase() === flag.trim().toUpperCase());
+          if (foundKey && typeof (rawRates as any)[foundKey] === 'object') {
+            ratesByFlag[flag] = { ...(rawRates as any)[foundKey] };
+          } else {
+            ratesByFlag[flag] = { ...DEFAULT_PARCELAS_RATES };
+          }
+        }
+      }
+    } else {
+      // Se era plana (caso da tabela Delivery antes desta atualização), inicializa cada bandeira com uma cópia independente das taxas
+      const flatRates = { ...(rawRates as Record<number, number>) };
+      for (const flag of flagsList) {
+        ratesByFlag[flag] = { ...DEFAULT_PARCELAS_RATES, ...flatRates };
       }
     }
+
+    // Calcula taxa máxima existente para garantir que maxTaxa seja ampla
+    let maxValInRates = 25.0;
+    Object.values(ratesByFlag).forEach(fRates => {
+      Object.values(fRates).forEach(v => {
+        if (typeof v === 'number' && v > maxValInRates) maxValInRates = Math.ceil(v * 10) / 10;
+      });
+    });
 
     setNewTableForm({
       nomeTabela: tabela.nomeTabela,
       tipoTabela: tabela.tipoTabela,
-      minTaxa: tabela.faixaTaxas?.min ?? 5.5,
-      maxTaxa: tabela.faixaTaxas?.max ?? 18.5,
-      bandeiras: Array.isArray(tabela.bandeiras) ? [...tabela.bandeiras] : ['VISA', 'MASTER'],
+      minTaxa: tabela.faixaTaxas?.min ?? 5.0,
+      maxTaxa: Math.max(tabela.faixaTaxas?.max ?? 25.0, maxValInRates),
+      bandeiras: flagsList,
+      activeModalFlag: flagsList[0] || 'VISA',
       newFlagName: '',
-      taxasPorParcelas: { ...flatRates },
+      renamingFlag: null,
+      renameValue: '',
+      taxasPorBandeira: ratesByFlag,
       simGrossAmount: 1000,
       simInstallment: 10
     });
@@ -439,13 +550,27 @@ const RatesSettingsManager: React.FC = () => {
       setSaving(true);
       const existing = editingTableId ? customTables.find(t => t.id === editingTableId) : null;
 
+      // Sanitiza taxas garantindo que todas as 18 parcelas existam para cada bandeira
+      const sanitizedTaxas: Record<string, Record<number, number>> = {};
+      let highestRate = Number(newTableForm.maxTaxa);
+
+      newTableForm.bandeiras.forEach(b => {
+        sanitizedTaxas[b] = {};
+        const bRates = newTableForm.taxasPorBandeira[b] || DEFAULT_PARCELAS_RATES;
+        for (let i = 1; i <= 18; i++) {
+          const val = Number(bRates[i] ?? DEFAULT_PARCELAS_RATES[i] ?? 0);
+          sanitizedTaxas[b][i] = Number(val.toFixed(2));
+          if (val > highestRate) highestRate = Number(val.toFixed(2));
+        }
+      });
+
       const resultado = criarNovaTabelaTaxas({
         id: editingTableId || undefined,
         nomeTabela: newTableForm.nomeTabela,
         tipoTabela: newTableForm.tipoTabela,
-        faixaTaxas: { min: Number(newTableForm.minTaxa), max: Number(newTableForm.maxTaxa) },
+        faixaTaxas: { min: Number(newTableForm.minTaxa), max: Math.max(Number(newTableForm.maxTaxa), highestRate) },
         bandeiras: newTableForm.bandeiras,
-        taxasPorParcelas: newTableForm.taxasPorParcelas,
+        taxasPorParcelas: sanitizedTaxas,
         dataCriacao: existing?.dataCriacao,
         dataCriacaoFormatada: existing?.dataCriacaoFormatada
       });
@@ -1220,51 +1345,173 @@ const RatesSettingsManager: React.FC = () => {
                   </div>
                 </div>
                 <p style={{ margin: '0.5rem 0 0', fontSize: '0.75rem', color: '#64748b' }}>
-                  Todas as taxas de 1x a 18x deverão estar entre <strong>{newTableForm.minTaxa}%</strong> e <strong>{newTableForm.maxTaxa}%</strong>.
+                  O sistema aceita livremente taxas de 19,99% ou superiores. Ao digitar valores maiores, o teto da faixa se ajusta automaticamente.
                 </p>
               </div>
 
-              {/* Linha 3: Bandeiras Aceitas com Adição Dinâmica */}
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                  Bandeiras Aceitas na Tabela (Dinâmico) *
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                  {newTableForm.bandeiras.map(b => (
-                    <span
-                      key={b}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        background: '#eff6ff',
-                        color: '#1d4ed8',
-                        padding: '0.4rem 0.8rem',
-                        borderRadius: '10px',
-                        fontSize: '0.85rem',
-                        fontWeight: 800,
-                        border: '1px solid #bfdbfe'
-                      }}
-                    >
-                      💳 {b}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveFlagFromNewTable(b)}
-                        style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', padding: 0, fontSize: '0.8rem', fontWeight: 900 }}
-                        title="Remover bandeira"
-                      >
-                        ✕
-                      </button>
+              {/* Linha 3: Bandeiras Aceitas com Adição Dinâmica, Renomeação e Seleção de Aba */}
+              <div style={{ marginBottom: '1.5rem', background: '#f8fafc', padding: '1.25rem', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase' }}>
+                      Bandeiras da Tabela (Clique para editar as taxas de cada uma) *
+                    </label>
+                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                      Cada bandeira possui sua própria grade de taxas. Você pode renomear (✏️), excluir (✕) ou adicionar novas bandeiras.
                     </span>
-                  ))}
+                  </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '400px' }}>
+                {/* Abas das Bandeiras */}
+                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '1rem', marginTop: '0.75rem' }}>
+                  {newTableForm.bandeiras.map(b => {
+                    const isActive = (newTableForm.activeModalFlag || newTableForm.bandeiras[0]) === b;
+                    const isRenaming = newTableForm.renamingFlag === b;
+
+                    if (isRenaming) {
+                      return (
+                        <div
+                          key={b}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                            background: '#ffffff',
+                            padding: '0.3rem 0.5rem',
+                            borderRadius: '12px',
+                            border: '2px solid #d97706',
+                            boxShadow: '0 2px 8px rgba(217, 119, 6, 0.2)'
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={newTableForm.renameValue}
+                            onChange={e => setNewTableForm(prev => ({ ...prev, renameValue: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                handleConfirmRenameFlag(b);
+                              } else if (e.key === 'Escape') {
+                                setNewTableForm(prev => ({ ...prev, renamingFlag: null, renameValue: '' }));
+                              }
+                            }}
+                            autoFocus
+                            placeholder="Novo nome"
+                            style={{
+                              border: 'none',
+                              outline: 'none',
+                              fontWeight: 800,
+                              fontSize: '0.85rem',
+                              width: '120px',
+                              textTransform: 'uppercase'
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleConfirmRenameFlag(b)}
+                            style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '6px', padding: '3px 7px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 800 }}
+                            title="Confirmar novo nome"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setNewTableForm(prev => ({ ...prev, renamingFlag: null, renameValue: '' }))}
+                            style={{ background: '#cbd5e1', color: '#334155', border: 'none', borderRadius: '6px', padding: '3px 7px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 800 }}
+                            title="Cancelar"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={b}
+                        onClick={() => setNewTableForm(prev => ({ ...prev, activeModalFlag: b }))}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                          background: isActive ? '#d97706' : '#ffffff',
+                          color: isActive ? '#ffffff' : '#1e293b',
+                          padding: '0.5rem 0.9rem',
+                          borderRadius: '12px',
+                          fontSize: '0.85rem',
+                          fontWeight: 800,
+                          border: `2px solid ${isActive ? '#b45309' : '#cbd5e1'}`,
+                          cursor: 'pointer',
+                          boxShadow: isActive ? '0 4px 10px rgba(217, 119, 6, 0.25)' : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <span>💳 {b}</span>
+
+                        {/* Botão Renomear Nome da Bandeira */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartRenameFlag(b);
+                          }}
+                          style={{
+                            background: isActive ? 'rgba(255,255,255,0.25)' : '#f1f5f9',
+                            border: 'none',
+                            color: isActive ? '#ffffff' : '#64748b',
+                            cursor: 'pointer',
+                            padding: '2px 5px',
+                            borderRadius: '6px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title={`Renomear bandeira ${b}`}
+                        >
+                          <Edit3 size={12} />
+                        </button>
+
+                        {/* Botão Remover Bandeira */}
+                        {newTableForm.bandeiras.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveFlagFromNewTable(b);
+                            }}
+                            style={{
+                              background: isActive ? 'rgba(255,255,255,0.25)' : '#fee2e2',
+                              border: 'none',
+                              color: isActive ? '#ffffff' : '#dc2626',
+                              cursor: 'pointer',
+                              padding: '2px 5px',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: 900
+                            }}
+                            title={`Remover bandeira ${b}`}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Adição de Nova Bandeira */}
+                <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '420px' }}>
                   <input
                     type="text"
                     placeholder="Adicionar nova bandeira (Ex: HIPERCARD, CABAL)"
                     value={newTableForm.newFlagName}
                     onChange={e => setNewTableForm(prev => ({ ...prev, newFlagName: e.target.value }))}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddFlagToNewTable();
+                      }
+                    }}
                     style={{ ...inputRateStyle, textAlign: 'left', padding: '0.6rem 0.8rem', fontSize: '0.85rem' }}
                   />
                   <button
@@ -1277,103 +1524,126 @@ const RatesSettingsManager: React.FC = () => {
                 </div>
               </div>
 
-              {/* Linha 4: Grade de Taxas de 1x a 18x */}
-              <div style={{ marginBottom: '1.5rem' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 800, color: '#475569', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
-                  Taxas Percentuais por Parcela (1x a 18x)
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.6rem' }}>
-                  {Array.from({ length: 18 }, (_, i) => i + 1).map(installment => {
-                    const currentVal = newTableForm.taxasPorParcelas[installment] ?? 0;
-                    const isOutOfRange = currentVal < newTableForm.minTaxa || currentVal > newTableForm.maxTaxa;
+              {/* Linha 4: Grade de Taxas de 1x a 18x para a Bandeira Ativa */}
+              {(() => {
+                const activeFlag = newTableForm.activeModalFlag || newTableForm.bandeiras[0] || 'VISA';
+                const flagRates = newTableForm.taxasPorBandeira[activeFlag] || DEFAULT_PARCELAS_RATES;
 
-                    return (
-                      <div
-                        key={installment}
-                        style={{
-                          background: isOutOfRange ? '#fef2f2' : '#ffffff',
-                          border: `1.5px solid ${isOutOfRange ? '#ef4444' : '#cbd5e1'}`,
-                          borderRadius: '12px',
-                          padding: '0.5rem',
-                          textAlign: 'center'
-                        }}
-                      >
-                        <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isOutOfRange ? '#dc2626' : '#64748b', display: 'block', marginBottom: '0.2rem' }}>
-                          {installment}x
-                        </span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={currentVal === 0 ? '' : currentVal}
-                          placeholder="0,00"
-                          onChange={e => {
-                            const raw = e.target.value;
-                            const parsed = parseFloat(raw);
-                            // Permite apagar o campo por completo sem forçar 0 durante digitação
-                            handleRateChangeInNewTable(installment, raw === '' ? 0 : (isNaN(parsed) ? 0 : Math.max(0, parsed)));
-                          }}
-                          style={{
-                            width: '100%',
-                            border: 'none',
-                            background: 'transparent',
-                            textAlign: 'center',
-                            fontWeight: 800,
-                            fontSize: '0.9rem',
-                            color: isOutOfRange ? '#dc2626' : '#0f172a',
-                            outline: 'none'
-                          }}
-                        />
-                        {isOutOfRange && (
-                          <span style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 800, display: 'block', marginTop: '0.1rem' }}>
-                            Fora!
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                return (
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 900, color: '#0f172a', textTransform: 'uppercase' }}>
+                        <CreditCard size={16} color="#d97706" />
+                        Taxas Percentuais (1x a 18x) — Bandeira Selecionada: <span style={{ color: '#d97706', background: '#fffbeb', padding: '2px 8px', borderRadius: '8px', border: '1px solid #fed7aa' }}>{activeFlag}</span>
+                      </label>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                        Valores em % aplicados exclusivamente à bandeira <strong>{activeFlag}</strong>
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.6rem' }}>
+                      {Array.from({ length: 18 }, (_, i) => i + 1).map(installment => {
+                        const currentVal = flagRates[installment] ?? 0;
+                        const isOutOfRange = (currentVal < newTableForm.minTaxa && currentVal > 0) || (newTableForm.maxTaxa > 0 && currentVal > newTableForm.maxTaxa);
+
+                        return (
+                          <div
+                            key={installment}
+                            style={{
+                              background: isOutOfRange ? '#fef2f2' : '#ffffff',
+                              border: `1.5px solid ${isOutOfRange ? '#ef4444' : '#cbd5e1'}`,
+                              borderRadius: '12px',
+                              padding: '0.5rem',
+                              textAlign: 'center',
+                              transition: 'border-color 0.2s'
+                            }}
+                          >
+                            <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isOutOfRange ? '#dc2626' : '#64748b', display: 'block', marginBottom: '0.2rem' }}>
+                              {installment}x
+                            </span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={currentVal === 0 ? '' : currentVal}
+                              placeholder="0,00"
+                              onChange={e => {
+                                const raw = e.target.value;
+                                const parsed = parseFloat(raw);
+                                handleRateChangeInNewTable(installment, raw === '' ? 0 : (isNaN(parsed) ? 0 : Math.max(0, parsed)));
+                              }}
+                              style={{
+                                width: '100%',
+                                border: 'none',
+                                background: 'transparent',
+                                textAlign: 'center',
+                                fontWeight: 800,
+                                fontSize: '0.9rem',
+                                color: isOutOfRange ? '#dc2626' : '#0f172a',
+                                outline: 'none'
+                              }}
+                            />
+                            {isOutOfRange && (
+                              <span style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 800, display: 'block', marginTop: '0.1rem' }}>
+                                Fora!
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Linha 5: Simulador de Teste com calcularValorLiquido */}
-              <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '16px', border: '1.5px solid #bbf7d0', marginBottom: '2rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#166534', fontWeight: 900, fontSize: '0.9rem', marginBottom: '0.75rem' }}>
-                  <Calculator size={18} color="#16a34a" /> Prévia com Função Auxiliar calcularValorLiquido()
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 2fr', gap: '1rem', alignItems: 'center' }}>
-                  <div>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Valor Bruto no Cartão (R$):</span>
-                    <input
-                      type="number"
-                      step="any"
-                      min="0"
-                      value={newTableForm.simGrossAmount}
-                      onChange={e => setNewTableForm(prev => ({ ...prev, simGrossAmount: parseFloat(e.target.value) || 0 }))}
-                      style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
-                    />
+              {(() => {
+                const activeFlag = newTableForm.activeModalFlag || newTableForm.bandeiras[0] || 'VISA';
+                const flagRates = newTableForm.taxasPorBandeira[activeFlag] || DEFAULT_PARCELAS_RATES;
+                const simRate = flagRates[newTableForm.simInstallment] ?? 0;
+                const liquidoCalculado = calcularValorLiquido(newTableForm.simGrossAmount, newTableForm.simInstallment, simRate);
+
+                return (
+                  <div style={{ background: '#f0fdf4', padding: '1.25rem', borderRadius: '16px', border: '1.5px solid #bbf7d0', marginBottom: '2rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#166534', fontWeight: 900, fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+                      <Calculator size={18} color="#16a34a" /> Prévia com Função Auxiliar calcularValorLiquido() — Bandeira: {activeFlag}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 2fr', gap: '1rem', alignItems: 'center' }}>
+                      <div>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Valor Bruto no Cartão (R$):</span>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={newTableForm.simGrossAmount}
+                          onChange={e => setNewTableForm(prev => ({ ...prev, simGrossAmount: parseFloat(e.target.value) || 0 }))}
+                          style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
+                        />
+                      </div>
+                      <div>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Parcelas:</span>
+                        <select
+                          value={newTableForm.simInstallment}
+                          onChange={e => setNewTableForm(prev => ({ ...prev, simInstallment: Number(e.target.value) }))}
+                          style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
+                        >
+                          {Array.from({ length: 18 }, (_, i) => i + 1).map(n => (
+                            <option key={n} value={n}>{n}x</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div style={{ background: '#ffffff', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #86efac' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>
+                          Taxa Aplicada ({activeFlag}): <strong>{simRate}%</strong>
+                        </span>
+                        <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#15803d' }}>
+                          Líquido: R$ {liquidoCalculado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>Parcelas:</span>
-                    <select
-                      value={newTableForm.simInstallment}
-                      onChange={e => setNewTableForm(prev => ({ ...prev, simInstallment: Number(e.target.value) }))}
-                      style={{ ...inputRateStyle, textAlign: 'left', padding: '0.5rem 0.8rem', fontSize: '0.9rem', fontWeight: 700 }}
-                    >
-                      {Array.from({ length: 18 }, (_, i) => i + 1).map(n => (
-                        <option key={n} value={n}>{n}x</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div style={{ background: '#ffffff', padding: '0.75rem 1rem', borderRadius: '12px', border: '1px solid #86efac' }}>
-                    <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>
-                      Taxa Aplicada: <strong>{newTableForm.taxasPorParcelas[newTableForm.simInstallment] || 0}%</strong>
-                    </span>
-                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#15803d' }}>
-                      Líquido: R$ {calcularValorLiquido(newTableForm.simGrossAmount, newTableForm.simInstallment, newTableForm.taxasPorParcelas[newTableForm.simInstallment] || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Botões do Modal */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
