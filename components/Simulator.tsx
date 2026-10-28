@@ -14,7 +14,7 @@ const CACHE_KEY_PUBLIC_SIM = 'cmcred_public_sim_draft';
 
 const Simulator: React.FC = () => {
   const [flags, setFlags] = useState<CardFlagOption[]>(getCustomCardFlags());
-  const tabelaTaxa: RateTableType = 'tabela_2';
+  const tabelaTaxa: RateTableType = 'tabela_1';
   const [tipoCalculo, setTipoCalculo] = useState<'Valor Líquido' | 'Valor Bruto'>(() => {
     return loadCachedData<any>(CACHE_KEY_PUBLIC_SIM)?.tipoCalculo || 'Valor Líquido';
   });
@@ -151,7 +151,7 @@ const Simulator: React.FC = () => {
 
                   {/* Badge */}
                   <div className="absolute -top-3 right-4 bg-gradient-to-r from-amber-500 to-yellow-500 text-black-950 text-[10px] md:text-xs font-black px-3.5 py-1 rounded-full uppercase tracking-wider shadow-lg ring-2 ring-black flex items-center gap-1.5">
-                    <CheckCircle2 size={12} /> {tipoCalculo} (Tabela Flex)
+                    <CheckCircle2 size={12} /> {tipoCalculo} (Tabela Padrão)
                   </div>
 
                   <div className="space-y-6">

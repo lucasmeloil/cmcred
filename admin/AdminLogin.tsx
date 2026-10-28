@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from './AuthContext';
-import { Shield, Mail, Lock, LogIn, CheckCircle, AlertCircle, ArrowRight } from 'lucide-react';
+import { Shield, Mail, Lock, LogIn, CheckCircle, AlertCircle, ArrowRight, ArrowLeft } from 'lucide-react';
 
 const AdminLogin: React.FC = () => {
   const { login } = useAuth();
@@ -64,6 +64,47 @@ const AdminLogin: React.FC = () => {
         position: 'relative'
       }}>
         <div style={{ position: 'relative', zIndex: 1, padding: '0 1rem' }}>
+          <div className="back-to-site-wrapper" style={{ marginBottom: '1.75rem', display: 'flex' }}>
+            <a
+              href="https://cmcredlagarto.com.br"
+              onClick={(e) => {
+                e.preventDefault();
+                if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                  window.location.href = '/';
+                } else {
+                  window.location.href = 'https://cmcredlagarto.com.br';
+                }
+              }}
+              title="Voltar para a página inicial (cmcredlagarto.com.br)"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                color: '#b45309',
+                fontWeight: 700,
+                fontSize: '0.85rem',
+                textDecoration: 'none',
+                padding: '0.55rem 1.1rem',
+                borderRadius: '12px',
+                background: '#fef3c7',
+                border: '1px solid #fde68a',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
+              }}
+              onMouseOver={e => {
+                e.currentTarget.style.background = '#fde68a';
+                e.currentTarget.style.transform = 'translateX(-3px)';
+              }}
+              onMouseOut={e => {
+                e.currentTarget.style.background = '#fef3c7';
+                e.currentTarget.style.transform = 'translateX(0)';
+              }}
+            >
+              <ArrowLeft size={16} /> Voltar ao site
+            </a>
+          </div>
+
           <div className="mobile-header" style={{ marginBottom: '2.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
               <img className="mobile-logo" src="/cmcred-logo.png" alt="CMCred" style={{ height: '44px', width: 'auto', objectFit: 'contain' }} />
@@ -270,6 +311,9 @@ const AdminLogin: React.FC = () => {
           }
           .mobile-header {
             text-align: center !important;
+          }
+          .back-to-site-wrapper {
+            justify-content: center !important;
           }
           .mobile-logo {
             margin: 0 auto 1.5rem auto !important;
